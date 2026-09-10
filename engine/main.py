@@ -13,13 +13,13 @@ from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-from datasets import DATA_DIR, list_uploads, resolve_num_classes
+from datasets import DATA_DIR, list_uploads
 from exporter import generate_notebook, generate_python, notebook_to_json
-from graph import Graph, canon, order_graph, validate_dynamic
-from model_builder import build_model, count_params
+from graph import Graph, ValidationError, canon, validate_dynamic
+from model_builder import validate_pipeline
 from trainer import create_job, job_summary, jobs, list_jobs, run_training, subscribers
 
 app = FastAPI(title="VisualML Engine", version="0.1.0")
@@ -50,33 +50,42 @@ def health():
     return {"ok": True, "service": "visualml-engine"}
 
 
+def _validation_error_response(e: ValueError):
+    """Backward-compat envelope: detail stays a plain string; structured
+    stage/node/op context rides alongside for new clients."""
+    if isinstance(e, ValidationError):
+        d = e.to_dict()
+        content = {"detail": str(e), "error": d}
+        content.update({k: d[k] for k in
+                        ("stage", "node_id", "op", "expected", "got", "reason", "hint")})
+        return JSONResponse(status_code=400, content=content)
+    return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
 @app.post("/api/validate")
 def validate(graph: Graph):
     try:
-        ordered_pre = order_graph(graph)
-        inp = next(n for n in ordered_pre if canon(n.type) == "input").params
-        num_classes = resolve_num_classes(
-            str(inp.get("dataset", "synthetic")), str(inp.get("dataset_path", "")),
-            ordered_pre,
-        )
-        model, cfg, specs = build_model(graph.nodes, graph.edges, num_classes)
-        return {
-            "ok": True,
-            "order": [f"{canon(n.type)}({n.id})" for n in ordered_pre],
-            "params": count_params(model),
-            "config": cfg,
-            "shapes": [{k: s[k] for k in ("id", "kind", "in", "out")} for s in specs],
-        }
+        res = validate_pipeline(graph.nodes, graph.edges)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        return _validation_error_response(e)
+    cfg, specs = res["cfg"], res["specs"]
+    return {
+        "ok": True,
+        "order": [f"{canon(n.type)}({n.id})" for n in res["order"]],
+        "params": res["total_params"],
+        "config": cfg,
+        "shapes": [{k: s[k] for k in ("id", "kind", "in", "out") if k in s
+                     } | {"num_params": s.get("num_params", 0)} for s in specs],
+        "warnings": res["warnings"],
+    }
 
 
 @app.post("/api/train")
 async def start_train(req: TrainRequest):
     try:
-        validate_dynamic(req.graph)
+        validate_pipeline(req.graph.nodes, req.graph.edges)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        return _validation_error_response(e)
     fmt = req.save_format.lower().lstrip(".")
     if fmt not in ("pt", "pth", "pkl"):
         raise HTTPException(400, "save_format must be pt | pth | pkl")

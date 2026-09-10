@@ -7,6 +7,7 @@ export default function MlNode({ data, selected }: NodeProps) {
   const params = data.params as Record<string, string | number>;
   const keys = Object.keys(params ?? {}).slice(0, 3);
   const summary = keys.map((k) => `${k}=${params[k]}`).join("  ") || "no params";
+  const shape = typeof data.shape === "string" ? data.shape : null;
   return (
     <div className={`ml-node${selected ? " sel" : ""}`} style={{ borderTopColor: meta.color }}>
       <Handle type="target" position={Position.Left} />
@@ -14,6 +15,7 @@ export default function MlNode({ data, selected }: NodeProps) {
         {meta.label}
       </div>
       <div className="ml-node-desc">{meta.desc}</div>
+      {shape && <div className="ml-node-shape" title={`in→out: ${shape}`}>{shape}</div>}
       <div className="ml-node-params">{summary}</div>
       <Handle type="source" position={Position.Right} />
     </div>

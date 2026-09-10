@@ -1,4 +1,5 @@
-import type { JobState } from "../graph";
+import type { JobState, ValidateShape } from "../graph";
+import { fmtDims } from "../graph";
 
 function Curve({ history }: { history: JobState["history"] }) {
   if (history.length === 0) return <p className="muted">Loss curve will appear here once training starts.</p>;
@@ -22,8 +23,16 @@ function Curve({ history }: { history: JobState["history"] }) {
   );
 }
 
-export default function LogsPanel({ job, logs, open, onToggle }: {
-  job: JobState | null; logs: string[]; open: boolean; onToggle: () => void;
+export interface ModelSummary {
+  order: string[];
+  params: number | null;
+  shapes: ValidateShape[];
+  config?: Record<string, unknown> | null;
+  warnings: string[];
+}
+
+export default function LogsPanel({ job, logs, open, onToggle, summary }: {
+  job: JobState | null; logs: string[]; open: boolean; onToggle: () => void; summary?: ModelSummary | null;
 }) {
   return (
     <section className={`logs${open ? "" : " closed"}`}>
@@ -51,7 +60,33 @@ export default function LogsPanel({ job, logs, open, onToggle }: {
               </tbody>
             </table>
           )}
-        </div>
+          {summary && (
+            <div className="summary">
+              <b>Model Summary</b>
+              <span className="muted small"> {summary.order.join(" → ") || "—"}</span>
+              {summary.params != null && <span className="muted small"> · {summary.params} params</span>}
+              {summary.config && (
+                <span className="muted small"> · {String((summary.config as { dataset?: string }).dataset ?? "")}</span>
+              )}
+              <table>
+                <thead><tr><th>block</th><th>in → out</th><th>params</th></tr></thead>
+                <tbody>
+                  {summary.shapes.map((s) => (
+                    <tr key={s.id}>
+                      <td>{s.kind}({s.id})</td>
+                      <td>{fmtDims(s.in) ?? "?"} → {fmtDims(s.out) ?? "?"}</td>
+                      <td>{typeof s.nodeParams === "number" ? s.nodeParams : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {summary.warnings.length > 0 && (
+                <ul className="warns">
+                  {summary.warnings.map((w, i) => <li key={i}>⚠ {w}</li>)}
+                </ul>
+              )}
+            </div>
+          )}        </div>
         <pre className="logs-pre">{logs.length ? logs.join("\n") : "Press Train to start. Logs stream here live via WebSocket."}</pre>
       </div>
     </section>

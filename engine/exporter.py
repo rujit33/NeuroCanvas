@@ -9,18 +9,9 @@ from __future__ import annotations
 import json
 from typing import Dict, List
 
+from datasets import resolve_num_classes
 from graph import Edge, Node, canon, expand_classifier_edges, is_legacy_classifier, normalize_nodes
 from model_builder import build_model
-
-
-def _last_linear_out(nodes: List[Node]) -> int:
-    lins = [n for n in nodes if canon(n.type) == "linear"]
-    if lins:
-        return int(lins[-1].params.get("out_features", 10))
-    leg = [n for n in nodes if canon(n.type) == "classifier"]
-    if leg:
-        return int(leg[-1].params.get("num_classes", 10))
-    return 10
 
 
 def _act_code(t: str) -> str:
@@ -60,7 +51,12 @@ def _is_chain(order_ids: List[str], preds: Dict[str, List[str]]) -> bool:
 
 
 def generate_python(nodes: List[Node], edges: List[Edge], epochs: int = 5) -> str:
-    num_classes = _last_linear_out(nodes)
+    inp = next((n for n in nodes if canon(n.type) == "input"), None)
+    num_classes = resolve_num_classes(
+        str((inp.params.get("dataset", "synthetic")) if inp else "synthetic"),
+        str(inp.params.get("dataset_path", "") if inp else ""),
+        nodes,
+    )
     model, cfg, specs = build_model(nodes, edges, num_classes)
     nodes_n = normalize_nodes(nodes, num_classes)
     edges_n = (expand_classifier_edges(nodes_n, edges)
@@ -96,7 +92,7 @@ def generate_python(nodes: List[Node], edges: List[Edge], epochs: int = 5) -> st
         layer_defs = "\n".join(f"        self.l_{i} = {_layer_code(s)}" for i, s in enumerate(specs))
         fwd_lines = []
         for i, s in enumerate(specs):
-            pre = [e.source for e in edges if e.target == s["id"]]
+            pre = [e.source for e in edges_n if e.target == s["id"]]
             if len(pre) == 1 and pre[0] == model.entry:
                 fwd_lines.append(f"        v_{i} = self.l_{i}(x)")
             elif not pre:

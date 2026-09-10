@@ -245,6 +245,18 @@ button:disabled { opacity: 0.45; cursor: default; }
   text-overflow: ellipsis;
 }
 
+.ml-node-shape {
+  margin-top: 5px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: #7dd3fc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.summary { margin-top: 8px; font-size: 12px; }
+.summary table { width: 100%; font-size: 11.5px; border-collapse: collapse; margin-top: 6px; }
+.summary .warns { margin: 6px 0 0; padding-left: 18px; color: #fde68a; font-size: 11.5px; }
 .group-node {
   background: linear-gradient(135deg, #2a1650, #3b0764);
   border: 2px dashed #e879f9;

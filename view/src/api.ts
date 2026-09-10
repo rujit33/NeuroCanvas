@@ -26,8 +26,13 @@ export async function postJSON<T>(path: string, body: unknown): Promise<T> {
     const txt = await res.text();
     try {
       const j = JSON.parse(txt);
-      throw new Error(j.detail ?? txt);
+      const d = j.detail ?? txt;
+      // ponytail: keep structured detail on the error for validate() to parse.
+      const err = new Error(typeof d === "string" ? d : JSON.stringify(d));
+      (err as Error & { payload?: unknown }).payload = j;
+      throw err;
     } catch (e) {
+      if (e instanceof Error && (e as Error & { payload?: unknown }).payload !== undefined) throw e;
       if (e instanceof Error && (e as Error).message !== txt) throw e;
       throw new Error(txt || `HTTP ${res.status}`);
     }
