@@ -1,5 +1,5 @@
 import type { Edge, Node } from "reactflow";
-import { API, WS, downloadBlob, postJSON, serialize } from "./api";
+import { API, WS, downloadBlob, downloadText, postJSON, serialize } from "./api";
 import ConfigPanel from "./components/ConfigPanel";
 import LogsPanel from "./components/LogsPanel";
 import GroupNode from "./components/GroupNode";
@@ -45,6 +45,74 @@ function countMembers(nodes: Node[], groupId: string): number {
   };
   walk(groupId);
   return n;
+}
+
+/* ---------- JSON graph save/load + format guide (v1, kind is open-ended) ---------- */
+
+const GUIDE_EXAMPLE = `{
+  "version": 1, "app": "visualML",
+  "nodes": [
+    {"id": "input", "type": "ml", "position": {"x": 40, "y": 180},
+     "data": {"kind": "input", "params": {}}},
+    {"id": "fc1", "type": "ml", "position": {"x": 260, "y": 180},
+     "data": {"kind": "linear", "params": {"out_features": 10}}},
+    {"id": "output", "type": "ml", "position": {"x": 480, "y": 180},
+     "data": {"kind": "output", "params": {}}}
+  ],
+  "edges": [
+    {"id": "e1", "source": "input", "target": "fc1"},
+    {"id": "e2", "source": "fc1", "target": "output"}
+  ]
+}`;
+
+const GUIDE_PROMPT =
+  `Create a visualML v1 JSON graph with nodes/edges matching the schema above (kind is an open-ended block-type string with a params object). Only output JSON.`;
+
+const GUIDE_COPY = `visualML v1 JSON graph format
+Top level: {version: 1, app: "visualML", exportedAt: ISO-string, nodes: [...], edges: [...]}.
+Node: {id: string, type: "ml" | "group", position: {x: number, y: number}, parentId?: string (group membership), data: {kind: string (open-ended block type), params: object, name?: string (groups)}}.
+Edge: {id: string, source: node-id, target: node-id}.
+Unknown kinds load as-is (no allowlist). Minimal example:
+${GUIDE_EXAMPLE}
+Prompt template: ${GUIDE_PROMPT}`;
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+// ponytail: structural guard only, unknown kinds pass (future blocks must load).
+function parseGraphFile(text: string): { nodes: Node[]; edges: Edge[] } {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw new Error("not valid JSON");
+  }
+  if (!isRecord(doc) || !Array.isArray(doc.nodes) || !Array.isArray(doc.edges)) {
+    throw new Error("expected {nodes: [...], edges: [...]}");
+  }
+  const nodes = (doc.nodes as unknown[]).map((v, i) => {
+    if (!isRecord(v) || typeof v.id !== "string") throw new Error(`nodes[${i}].id must be a string`);
+    const pos = v.position as unknown;
+    if (!isRecord(pos) || typeof pos.x !== "number" || typeof pos.y !== "number") {
+      throw new Error(`nodes[${i}] (${v.id}).position must be {x: number, y: number}`);
+    }
+    if (!isRecord(v.data)) throw new Error(`nodes[${i}] (${v.id}).data must be an object`);
+    const type = v.type === undefined ? "ml" : v.type;
+    if (type !== "ml" && type !== "group") throw new Error(`nodes[${i}] (${v.id}).type must be "ml" or "group"`);
+    if (type === "ml") {
+      const kind = (v.data as Record<string, unknown>).kind;
+      if (typeof kind !== "string" || !kind) throw new Error(`nodes[${i}] (${v.id}).data.kind must be a non-empty string`);
+    }
+    return { ...v, type } as Node;
+  });
+  const edges = (doc.edges as unknown[]).map((v, i) => {
+    if (!isRecord(v) || typeof v.id !== "string" || typeof v.source !== "string" || typeof v.target !== "string") {
+      throw new Error(`edges[${i}] needs string id/source/target`);
+    }
+    return v as unknown as Edge;
+  });
+  return { nodes, edges };
 }
 
 /* ------------------------------- studio ---------------------------------- */
@@ -108,6 +176,8 @@ function Studio() {
   const [busy, setBusy] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
 
   const byId = useMemo(() => new Map(masterNodes.map((n) => [n.id, n])), [masterNodes]);
 
@@ -437,6 +507,33 @@ function Studio() {
     }
   };
 
+  const exportJson = () => {
+    const payload = {
+      version: 1, app: "visualML",
+      exportedAt: new Date().toISOString(),
+      nodes: masterNodes, edges: masterEdges,
+    };
+    downloadText("visualml-graph.json", JSON.stringify(payload, null, 2));
+    setNotice(`Exported visualml-graph.json (${masterNodes.length} nodes, ${masterEdges.length} edges)`);
+  };
+
+  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    try {
+      const { nodes, edges } = parseGraphFile(await f.text());
+      setMasterNodes(nodes);
+      setMasterEdges(edges);
+      setScope(null);
+      setPath([]);
+      setSelectedId(null);
+      setNotice(`Imported ${f.name} (${nodes.length} nodes, ${edges.length} edges)`);
+    } catch (err) {
+      setNotice(`Import failed: ${(err as Error).message}`);
+    }
+  };
+
   const scopeName = scope ? byId.get(scope)?.data.name ?? scope : null;
   const inputNode = masterNodes.find((n) => n.type === "ml" && (n.data as { kind: string }).kind === "input");
   const batchSize = (inputNode?.data as { params?: Record<string, unknown> } | undefined)?.params?.batch_size ?? 64;
@@ -469,6 +566,10 @@ function Studio() {
           <button className="primary" onClick={train} disabled={busy}>▶ Train</button>
           <button onClick={() => doExport("python")}>⇩ .py</button>
           <button onClick={() => doExport("notebook")}>⇩ .ipynb</button>
+          <button onClick={exportJson} title="Save canvas as visualML v1 JSON">⇩ JSON</button>
+          <button onClick={() => fileRef.current?.click()} title="Load a visualML v1 JSON graph">⇧ Import</button>
+          <button onClick={() => setShowGuide(true)} title="JSON format guide">i</button>
+          <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={onImportFile} />
           {job?.save_path && (
             <a className="btn" href={`${API}/api/download/${job.job_id}`}>⇩ model.{saveFormat}</a>
           )}
@@ -571,6 +672,28 @@ function Studio() {
           onUngroup={ungroup}
         />
       </div>
+
+      {showGuide && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => setShowGuide(false)}
+        >
+          <div
+            className="panel"
+            style={{ maxWidth: 560, width: "100%", maxHeight: "85dvh", overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3>visualML v1 JSON format</h3>
+            <p className="muted">Top level <code>{"{version, app, exportedAt, nodes, edges}"}</code>. Node: <code>{"{id, type: ml|group, position: {x,y}, parentId?, data: {kind, params, name?}}"}</code> — <code>kind</code> is an open-ended block-type string with a <code>params</code> object. Edge: <code>{"{id, source, target}"}</code>. Unknown kinds load as-is.</p>
+            <pre className="logs-pre" style={{ height: "auto", marginBottom: 8 }}>{GUIDE_EXAMPLE}</pre>
+            <p className="muted">{GUIDE_PROMPT}</p>
+            <button
+              onClick={async () => { await navigator.clipboard.writeText(GUIDE_COPY); setNotice("Format guide copied"); }}
+            >Copy guide</button>
+            <button onClick={() => setShowGuide(false)}>Close</button>
+          </div>
+        </div>
+      )}
 
       <LogsPanel job={job} logs={logs} open={logsOpen} onToggle={() => setLogsOpen((v) => !v)} />
     </div>

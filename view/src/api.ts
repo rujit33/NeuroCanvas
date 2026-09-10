@@ -35,6 +35,16 @@ export async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export function downloadText(filename: string, text: string, mime = "application/json") {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function downloadBlob(path: string, body: unknown, filename: string) {
   const res = await fetch(`${API}${path}`, {
     method: "POST",
