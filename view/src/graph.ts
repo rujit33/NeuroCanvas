@@ -100,6 +100,51 @@ export const FIELDS: Record<string, FieldSpec[]> = {
     { key: "lr", label: "LR", kind: "number", step: 0.0001 },
   ],
 };
+export interface ValidateShape {
+  id: string;
+  kind: string;
+  in?: number[];
+  out?: number[];
+  nodeParams?: number;
+  params?: Record<string, unknown>;
+}
+
+export interface ValidateErrorInfo {
+  stage?: string;
+  node_id?: string;
+  nodeId?: string;
+  op?: string;
+  expected?: unknown;
+  got?: unknown;
+  reason?: string;
+  hint?: string;
+  message?: string;
+}
+
+export interface ValidateSuccess {
+  ok: boolean;
+  order?: string[];
+  params?: number;
+  config?: Record<string, unknown>;
+  shapes?: ValidateShape[];
+  warnings?: unknown;
+}
+
+/** Drop batch dim, join rest with x. Backend traces include batch. */
+export function fmtDims(d: unknown): string | null {
+  if (!Array.isArray(d) || d.length === 0) return null;
+  const nums = (d as unknown[]).map(Number);
+  if (nums.some((n) => !Number.isFinite(n))) return null;
+  const noBatch = nums.length > 1 ? nums.slice(1) : nums;
+  return noBatch.join("x");
+}
+
+// ponytail: single regex fallback for legacy string errors; structured error.node_id wins.
+export function nodeIdFromMessage(msg: string): string | null {
+  const m = msg.match(/[B isn]lock '([^']+)'|\(id=([^)]+)\)|"([^"]*?\d[^"]*)"/);
+  const hit = m?.[1] ?? m?.[2];
+  return hit ?? null;
+}
 export interface EpochPoint {
   epoch: number;
   train_loss: number;

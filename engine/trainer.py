@@ -11,9 +11,9 @@ from typing import Dict, List, Set
 
 import torch
 
-from datasets import get_dataloaders, resolve_num_classes
-from graph import Graph, canon, order_graph
-from model_builder import build_model, count_params, make_loss, make_optimizer
+from datasets import get_dataloaders
+from graph import canon
+from model_builder import count_params, make_loss, make_optimizer, validate_pipeline
 
 RUNS_DIR = Path(__file__).parent / "runs"
 RUNS_DIR.mkdir(exist_ok=True)
@@ -86,17 +86,14 @@ async def run_training(job_id: str):
     job["status"] = "running"
     try:
         graph = _Graph(**job["graph"])
-        ordered_pre = order_graph(graph)  # topo first so errors name cycles early
-        kinds = " -> ".join(canon(n.type) for n in ordered_pre)
+        # single staged pipeline (schema -> structural -> semantic -> params
+        # -> trace -> dataset); no duplicate checks here
+        res = await asyncio.to_thread(
+            validate_pipeline, graph.nodes, graph.edges)
+        model, cfg, specs = res["model"], res["cfg"], res["specs"]
+        kinds = " -> ".join(canon(n.type) for n in res["order"])
         _log(job_id, f"Graph wired: {kinds}")
-        inp = next(n for n in ordered_pre if canon(n.type) == "input").params
-        num_classes = await asyncio.to_thread(
-            resolve_num_classes, str(inp.get("dataset", "synthetic")),
-            str(inp.get("dataset_path", "")), ordered_pre,
-        )
-        model, cfg, specs = await asyncio.to_thread(
-            build_model, graph.nodes, graph.edges, num_classes)
-        job["params"] = count_params(model)
+        job["params"] = res["total_params"]
         _log(job_id, f"Model built: {count_params(model)} params | cfg={cfg}")
         for s in specs:
             _log(job_id, f"  {s['kind']}({s['id']}): {s.get('in')} -> {s.get('out')}")

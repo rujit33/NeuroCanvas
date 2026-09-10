@@ -4,7 +4,7 @@ import ConfigPanel from "./components/ConfigPanel";
 import LogsPanel from "./components/LogsPanel";
 import GroupNode from "./components/GroupNode";
 import MlNode from "./components/MlNode";
-import { KIND_META, defaultParams, type JobState, type NodeKind, type WireInfo } from "./graph";
+import { KIND_META, defaultParams, fmtDims, nodeIdFromMessage, type JobState, type NodeKind, type ValidateErrorInfo, type ValidateShape, type ValidateSuccess, type WireInfo } from "./graph";
 
 const nodeTypes = { ml: MlNode, group: GroupNode };
 const DEFAULT_EDGE_OPTIONS = { interactionWidth: 28 };
@@ -174,6 +174,10 @@ function Studio() {
   const [notice, setNotice] = useState("");
   const [palQuery, setPalQuery] = useState("");
   const [busy, setBusy] = useState(false);
+  const [summary, setSummary] = useState<{
+    order: string[]; params: number | null; shapes: ValidateShape[];
+    config?: Record<string, unknown> | null; warnings: string[];
+  } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -182,18 +186,22 @@ function Studio() {
   const byId = useMemo(() => new Map(masterNodes.map((n) => [n.id, n])), [masterNodes]);
 
   /* ----- derived view for current scope (portal stubs computed, never stored) ----- */
+  const shapeById = useMemo(() => new Map((summary?.shapes ?? []).map((s) => [s.id, s])), [summary]);
   const viewNodes: Node[] = useMemo(() => {
     return kidsOf(masterNodes, scope).map((n) => {
       const { parentId: _p, ...rest } = n as Node & { parentId?: string };
+      const s = shapeById.get(n.id);
+      const label = s ? `${fmtDims(s.in) ?? "?"}→${fmtDims(s.out) ?? "?"}` : null;
+      const withShape = label ? { ...n.data, shape: label } : n.data;
       if (n.type === "group") {
         return {
           ...rest, parentId: undefined,
-          data: { ...n.data, count: countMembers(masterNodes, n.id) },
+          data: { ...withShape, count: countMembers(masterNodes, n.id) },
         };
       }
-      return { ...rest, parentId: undefined };
+      return { ...rest, parentId: undefined, data: withShape };
     });
-  }, [masterNodes, scope]);
+  }, [masterNodes, scope, shapeById]);
 
   const viewEdges: Edge[] = useMemo(() => {
     const out: Edge[] = [];
@@ -444,13 +452,53 @@ function Studio() {
 
   useEffect(() => () => wsRef.current?.close(), []);
 
-  const validate = async () => {
+  /** Select node + jump scope to its immediate parent so collapsed groups reveal it. */
+  const revealNode = useCallback((id: string, nodes: Node[]) => {
+    const byIdLocal = new Map(nodes.map((n) => [n.id, n]));
+    const target = byIdLocal.get(id);
+    setSelectedId(id);
+    if (!target) return;
+    const chain: { id: string; name: string }[] = [];
+    let cur = target;
+    let guard = 0;
+    while ((cur.parentId ?? undefined) !== undefined && guard++ < 100) {
+      const p = byIdLocal.get(cur.parentId!);
+      if (!p) break;
+      chain.unshift({ id: p.id, name: (p.data.name as string) || p.id });
+      cur = p;
+    }
+    setScope((target.parentId ?? null) as string | null);
+    setPath(chain);
+  }, []);
+
+  const asWarnings = (w: unknown): string[] =>
+    Array.isArray(w) ? w.map((x) => (typeof x === "string" ? x : JSON.stringify(x))) : [];
+
+  const validate = async (nodes?: Node[], edges?: Edge[]) => {
     setBusy(true);
     try {
-      const r = await postJSON<{ ok: boolean; order: string[]; params: number }>(`/api/validate`, graph());
-      setNotice(`Valid ✓ ${(r.order as string[]).join("  →  ")} · ${r.params} params`);
+      const r = await postJSON<ValidateSuccess>(`/api/validate`, nodes && edges ? serialize(nodes, edges) : graph());
+      const warnings = asWarnings(r.warnings);
+      setSummary({ order: r.order ?? [], params: r.params ?? null, shapes: r.shapes ?? [], config: r.config ?? null, warnings });
+      const warnTxt = warnings.length ? ` · ⚠ ${warnings.join(" | ")}` : "";
+      setNotice(`Valid ✓ ${(r.order as string[] ?? []).join("  →  ")} · ${r.params} params${warnTxt}`);
     } catch (e) {
-      setNotice(`Invalid: ${(e as Error).message}`);
+      const msg = (e as Error).message;
+      const payload = (e as Error & { payload?: unknown }).payload as Record<string, unknown> | undefined;
+      // structured {ok:false, error:{...}, warnings[]} or legacy detail string
+      const errObj = (payload?.error ?? (() => { try { return JSON.parse(msg); } catch { return null; } })()) as ValidateErrorInfo | null;
+      const errRec = (errObj && typeof errObj === "object" ? errObj : null) as (ValidateErrorInfo & { error?: unknown }) | null;
+      const inner = errRec && typeof errRec.error === "object" ? errRec.error as ValidateErrorInfo : errRec;
+      const warnings = asWarnings(payload?.warnings);
+      if (warnings.length) setSummary((s) => s ? { ...s, warnings } : s);
+      const reason = inner?.reason ?? inner?.message ?? msg;
+      const hint = inner?.hint ? ` — ${inner.hint}` : "";
+      const bits = [inner?.stage, inner?.op, inner?.expected !== undefined ? `expected ${JSON.stringify(inner.expected)}` : null, inner?.got !== undefined ? `got ${JSON.stringify(inner.got)}` : null].filter(Boolean).join(" ");
+      const nid = inner?.node_id ?? inner?.nodeId ?? nodeIdFromMessage(msg);
+      const where = nid ? ` [${nid}]` : "";
+      const extra = bits ? ` (${bits})` : "";
+      setNotice(`Invalid${where}: ${reason}${extra}${hint}`);
+      if (nid) revealNode(nid, nodes ?? masterNodes);
     } finally {
       setBusy(false);
     }
@@ -529,6 +577,7 @@ function Studio() {
       setPath([]);
       setSelectedId(null);
       setNotice(`Imported ${f.name} (${nodes.length} nodes, ${edges.length} edges)`);
+      await validate(nodes, edges);
     } catch (err) {
       setNotice(`Import failed: ${(err as Error).message}`);
     }
@@ -562,7 +611,7 @@ function Studio() {
             <option value="weights_only">weights only</option>
             <option value="full">full training data</option>
           </select>
-          <button onClick={validate} disabled={busy}>Validate</button>
+          <button onClick={() => validate()} disabled={busy}>Validate</button>
           <button className="primary" onClick={train} disabled={busy}>▶ Train</button>
           <button onClick={() => doExport("python")}>⇩ .py</button>
           <button onClick={() => doExport("notebook")}>⇩ .ipynb</button>
@@ -695,7 +744,7 @@ function Studio() {
         </div>
       )}
 
-      <LogsPanel job={job} logs={logs} open={logsOpen} onToggle={() => setLogsOpen((v) => !v)} />
+      <LogsPanel job={job} logs={logs} open={logsOpen} onToggle={() => setLogsOpen((v) => !v)} summary={summary} />
     </div>
   );
 }
