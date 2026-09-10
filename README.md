@@ -3,8 +3,10 @@
 A modular, visual workbench for creating neural networks: drag blocks (Input, Conv,
 Activation, Pool, Flatten, Linear, Dropout, Output) onto a canvas, wire them together,
 configure them in an inspector, press **Train**, and watch live loss curves stream back.
-Save the result (`.pt` / `.pth` / `.pkl`, weights-only or full checkpoint) or export the
-whole architecture as a clean standalone `.py` / `.ipynb` file. PyTorch is the compute
+Save the result (`.pt` / `.pth` / `.pkl`, weights-only or full checkpoint), export the
+whole architecture as a clean standalone `.py` / `.ipynb` file, or save the canvas itself
+as a `visualML v1 JSON` graph (`visualml-graph.json`) — which can be re-imported later or
+produced by an AI assistant from the in-app format guide. PyTorch is the compute
 engine, React is the view.
 
 ```
@@ -35,6 +37,11 @@ writing PyTorch boilerplate, the user:
    train/val loss, accuracy, and log lines stream in live.
 6. **Takes the model with them**: downloads the trained file, or exports the architecture as a
    clean, runnable `model.py` / `model.ipynb` with all dimensions resolved to concrete numbers.
+7. **Saves and reuses graphs as JSON**: exports the full canvas (blocks, positions, groups,
+   wires) to `visualml-graph.json` and re-imports it later — see §2.6.
+8. **Builds graphs with AI help**: presses the **i** guide button, copies the format guide
+   (+ per-block init snippets from the Available Nodes tab), asks any LLM for a graph, and
+   imports the returned JSON — see §2.6.
 
 ### What it is trying to solve
 
@@ -145,13 +152,25 @@ the untouched master graph, so grouping cannot corrupt an architecture. Wiring _
 collapsed card auto-resolves when the group has a single entry/exit block, otherwise the UI
 asks you to open the group and wire the exact block.
 
+**i) The canvas itself persists as visualML v1 JSON** (flat React Flow state, distinct
+from the slimmed-down engine graph in (a)).
+`{version: 1, app: "visualML", exportedAt: <ISO>, nodes: [...], edges: [...]}` where each
+node is `{id, type: "ml"|"group", position: {x, y}, parentId?, data: {kind, params, name?}}`
+(`kind` is an open-ended block-type string; `parentId` preserves group membership) and
+each edge is `{id, source, target}`. Import runs a structural check only
+(`App.tsx::parseGraphFile`): top-level `nodes`/`edges` arrays, string ids, numeric
+`position`, object `data`, non-empty `kind` for `type === "ml"` (missing `type` coerces
+to `"ml"`). There is deliberately **no allowlist** — unknown future kinds load as-is
+(the card falls back to Linear styling via `MlNode`). Failures surface as inline notices
+(`Import failed: <reason>`), never a silent partial load.
+
 ### 2.3 Block reference
 
 | Block        | Key params                                                                                           | Notes                                                   |
 | ------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `input`      | `dataset` (synthetic\|mnist\|imagefolder), `dataset_path`, `image_size`, `batch_size`, `in_channels` | Exactly one per graph                                   |
 | `conv`       | `out_channels`, `kernel_size`, `stride`, `padding`                                                   | `in_channels` inferred                                  |
-| `activation` | `type` (relu\|sigmoid\|tanh\|leaky_relu\|gelu\|softmax)                                              | —                                                       |
+| `activation` | `type` (relu\|sigmoid\|tanh\|leaky_relu\|gelu)                                              | —                                                       |
 | `pool`       | `pool` (max\|avg\|adaptive), `kernel_size`, `stride`, `adaptive_size`                                | —                                                       |
 | `flatten`    | —                                                                                                    | Required before `linear` on image tensors               |
 | `linear`     | `out_features`                                                                                       | `in_features` inferred; last one must equal class count |
@@ -178,8 +197,18 @@ asks you to open the group and wire the exact block.
 
 - `App.tsx` — studio shell: master node/edge state, scope navigation (breadcrumb), grouping,
   portal-stub derivation (`useMemo`), train/export orchestration, top bar + notices.
+  JSON persistence lives here too: `exportJson` (dumps full master state as v1 JSON),
+  `onImportFile` (hidden file input → `parseGraphFile` → replaces master state, resets scope
+  to root), and the `i` guide modal (`showGuide`/`guideTab`, `GUIDE_EXAMPLE`/`GUIDE_PROMPT`/
+  `GUIDE_COPY`, see §2.6).
 - `graph.ts` — block kinds, default params, inspector field specs, `JobState`/`WireInfo` types.
-- `api.ts` — `API`/`WS` base URLs, graph serializer (drops group proxies), JSON + blob helpers.
+  `PALETTE` is the source of truth for available blocks; `KIND_META` (label/color/desc),
+  `defaultParams()` (per-kind initial params; `{}` for unknowns), `FIELDS` (inspector specs),
+  `canonKind()` (legacy `cnn`→`conv`, `classifier`→`linear` aliases).
+- `api.ts` — `API`/`WS` base URLs, `serialize()` (drops group proxies, maps to
+  `{id, type: kind, params}` + `{id, source, target}`), `postJSON()` (throws `detail` on
+  error), `downloadBlob()` (POSTs to the engine and saves the response), `downloadText()`
+  (saves client-side text — used for the JSON graph export).
 - `components/MlNode.tsx` / `GroupNode.tsx` — canvas cards (params summary; name + member count).
 - `components/ConfigPanel.tsx` — inspector: per-block fields, zip upload, group rename/open/ungroup,
   selected-wire deletion.
@@ -190,7 +219,41 @@ Two hard-won implementation notes: all React Flow callbacks/options are referent
 callback identity change — inline callbacks caused an infinite update loop (blank screen).
 RF’s light-theme chrome (MiniMap, Controls) is force-overridden to dark in `App.css`.
 
-### 2.6 Run it
+### 2.6 Graph persistence & AI-assisted import (`App.tsx` + `api.ts`)
+
+Top-bar buttons (left to right after the train controls): **Validate**, **▶ Train**,
+**⇩ .py**, **⇩ .ipynb**, model download link (appears after training), **⇩ JSON**
+(save canvas as `visualml-graph.json`), **⇧ Import** (load a v1 JSON graph),
+**i** (format guide modal).
+
+- **Format tab** — the contract, unchanged since introduction: schema text (top-level
+  `{version, app, exportedAt, nodes, edges}`; node/edge fields; `kind` is an open-ended
+  block-type string with a `params` object; unknown kinds load as-is), a tiny
+  input→linear→output example (`GUIDE_EXAMPLE`), a one-line prompt template
+  (`GUIDE_PROMPT`: "Create a visualML v1 JSON graph … Only output JSON"), and a
+  **Copy guide** button (copies `GUIDE_COPY` to clipboard).
+- **Available Nodes tab** — a catalog derived dynamically from `PALETTE` (no hardcoded
+  kind list, so future blocks appear automatically). Per kind: the kind name, the
+  one-line `KIND_META` description, and a minimal single-node init snippet
+  `{"id":"<kind>-1","type":"ml","position":{"x":0,"y":0},"data":{"kind":"<kind>",
+  "params":<defaultParams(kind)>}}`, rendered as a compact scrollable list of `<pre>`
+  snippets. A **Copy all** button copies the whole catalog as text.
+- **Import validation** (`parseGraphFile`): the file must parse as JSON with top-level
+  `nodes`/`edges` arrays; every node needs a string `id`, a numeric
+  `position: {x, y}`, and an object `data`; missing `type` coerces to `"ml"`;
+  `type === "ml"` additionally requires a non-empty string `data.kind` (no PALETTE
+  check); every edge needs string `id`/`source`/`target`. Success replaces the master
+  nodes/edges, resets scope to root, and posts a notice with counts
+  (`Imported <file> (N nodes, M edges)`); failure posts `Import failed: <reason>` and
+  the input value is always cleared so the same file can be retried.
+- **Round-trip workflow**: arrange canvas → `⇩ JSON` → modify or close → `⇧ Import` →
+  identical canvas (positions and group membership preserved, unlike `.py`/`.ipynb`
+  export which is architecture-only and one-way).
+- **AI workflow**: `i` → copy guide (+ Copy all from Available Nodes) → paste into any
+  LLM with a request ("Only output JSON") → save reply as `.json` → `⇧ Import` →
+  **Validate** to check the engine accepts it.
+
+### 2.7 Run it
 
 ```powershell
 # engine (from engine/; use the Python that has torch/fastapi/uvicorn)
@@ -205,12 +268,14 @@ First run: leave the input block on `synthetic`, press **▶ Train** — no file
 `engine/requirements.txt` pins the backend deps (`fastapi, uvicorn, torch, numpy, pillow,
 pydantic, python-multipart`).
 
-### 2.7 Limits & next steps
+### 2.8 Limits & next steps
 
 CPU-only training; one input / one output per graph; branch merges require equal shapes;
-`cross_entropy` loss only. Natural extensions: transformer blocks (the executor already
-supports arbitrary DAGs — new block types plug into `GraphExecutor` + `FIELDS`), GPU
-selection, run comparison, and graph persistence/sharing.
+`cross_entropy` loss only. Canvas persistence already exists (v1 JSON export/import, §2.6).
+Natural extensions: transformer blocks (the executor already
+supports arbitrary DAGs — new block types plug into `GraphExecutor` + `FIELDS` and then
+appear automatically in the palette, the Available Nodes tab, and the importer), GPU
+selection, run comparison, and a model zoo of shareable JSON graphs.
 
 # Home screen preview
 

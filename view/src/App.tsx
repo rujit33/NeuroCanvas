@@ -4,7 +4,7 @@ import ConfigPanel from "./components/ConfigPanel";
 import LogsPanel from "./components/LogsPanel";
 import GroupNode from "./components/GroupNode";
 import MlNode from "./components/MlNode";
-import { KIND_META, defaultParams, type JobState, type NodeKind, type WireInfo } from "./graph";
+import { KIND_META, PALETTE, defaultParams, type JobState, type NodeKind, type WireInfo } from "./graph";
 
 const nodeTypes = { ml: MlNode, group: GroupNode };
 const DEFAULT_EDGE_OPTIONS = { interactionWidth: 28 };
@@ -178,6 +178,7 @@ function Studio() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [guideTab, setGuideTab] = useState<"format" | "nodes">("format");
 
   const byId = useMemo(() => new Map(masterNodes.map((n) => [n.id, n])), [masterNodes]);
 
@@ -684,12 +685,50 @@ function Studio() {
             onClick={(e) => e.stopPropagation()}
           >
             <h3>visualML v1 JSON format</h3>
-            <p className="muted">Top level <code>{"{version, app, exportedAt, nodes, edges}"}</code>. Node: <code>{"{id, type: ml|group, position: {x,y}, parentId?, data: {kind, params, name?}}"}</code> — <code>kind</code> is an open-ended block-type string with a <code>params</code> object. Edge: <code>{"{id, source, target}"}</code>. Unknown kinds load as-is.</p>
-            <pre className="logs-pre" style={{ height: "auto", marginBottom: 8 }}>{GUIDE_EXAMPLE}</pre>
-            <p className="muted">{GUIDE_PROMPT}</p>
-            <button
-              onClick={async () => { await navigator.clipboard.writeText(GUIDE_COPY); setNotice("Format guide copied"); }}
-            >Copy guide</button>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              <button
+                style={guideTab === "format" ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
+                onClick={() => setGuideTab("format")}
+              >Format</button>
+              <button
+                style={guideTab === "nodes" ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
+                onClick={() => setGuideTab("nodes")}
+              >Available Nodes</button>
+            </div>
+            {guideTab === "format" ? (
+              <>
+                <p className="muted">Top level <code>{"{version, app, exportedAt, nodes, edges}"}</code>. Node: <code>{"{id, type: ml|group, position: {x,y}, parentId?, data: {kind, params, name?}}"}</code> — <code>kind</code> is an open-ended block-type string with a <code>params</code> object. Edge: <code>{"{id, source, target}"}</code>. Unknown kinds load as-is.</p>
+                <pre className="logs-pre" style={{ height: "auto", marginBottom: 8 }}>{GUIDE_EXAMPLE}</pre>
+                <p className="muted">{GUIDE_PROMPT}</p>
+                <button
+                  onClick={async () => { await navigator.clipboard.writeText(GUIDE_COPY); setNotice("Format guide copied"); }}
+                >Copy guide</button>
+              </>
+            ) : (
+              <>
+                <div style={{ maxHeight: "50dvh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+                  {PALETTE.map((k) => (
+                    <div key={k}>
+                      <div style={{ fontSize: 13 }}>
+                        <code>{k}</code>
+                        <span className="muted"> — {KIND_META[k]?.desc ?? "block"}</span>
+                      </div>
+                      <pre className="logs-pre" style={{ height: "auto" }}>{JSON.stringify({ id: `${k}-1`, type: "ml", position: { x: 0, y: 0 }, data: { kind: k, params: defaultParams(k) } })}</pre>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  style={{ marginTop: 8 }}
+                  onClick={async () => {
+                    const catalog = PALETTE.map((k) =>
+                      `${k} — ${KIND_META[k]?.desc ?? "block"}\n${JSON.stringify({ id: `${k}-1`, type: "ml", position: { x: 0, y: 0 }, data: { kind: k, params: defaultParams(k) } })}`
+                    ).join("\n\n");
+                    await navigator.clipboard.writeText(catalog);
+                    setNotice("Node catalog copied");
+                  }}
+                >Copy all</button>
+              </>
+            )}
             <button onClick={() => setShowGuide(false)}>Close</button>
           </div>
         </div>
