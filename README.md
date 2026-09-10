@@ -18,6 +18,7 @@ visualML/
 ## 1) Overall idea
 
 ### What this project does
+
 VisualML turns neural-network construction into a **LEGO-like visual activity**. Instead of
 writing PyTorch boilerplate, the user:
 
@@ -36,21 +37,23 @@ writing PyTorch boilerplate, the user:
    clean, runnable `model.py` / `model.ipynb` with all dimensions resolved to concrete numbers.
 
 ### What it is trying to solve
+
 - **Barrier to entry.** Building even a small CNN in PyTorch requires knowing datasets,
   dataloaders, shape bookkeeping (`in_features` after every flatten), training loops,
   checkpointing, and device handling. VisualML absorbs all of that: conv/linear layers
   **infer their input sizes automatically** from whatever flows into them, so users think in
-  *blocks and data flow*, not tensor algebra.
-- **Architecture comprehension.** Code hides structure; a graph *shows* it. Grouping adds
+  _blocks and data flow_, not tensor algebra.
+- **Architecture comprehension.** Code hides structure; a graph _shows_ it. Grouping adds
   zoom levels (root overview → named sub-assembly → raw blocks), which is how engineers
   actually reason about big models.
 - **Iteration speed.** Change a kernel size, rewire a branch, retrain, compare loss curves —
   without touching code. Validation errors name the exact block and problem
   (e.g. `Linear block 'fc1' got a 4D tensor … add a Flatten block before Linear`).
-- **No lock-in.** Everything the UI knows can leave the UI: the trained weights *and* a
+- **No lock-in.** Everything the UI knows can leave the UI: the trained weights _and_ a
   human-readable, dependency-light source export that runs anywhere PyTorch runs.
 
 ### Current scope (working prototype)
+
 Image classification with a dynamic CNN/MLP DAG (the original “LLM” framing is the north
 star; the engine abstraction — typed blocks + DAG executor — is what a transformer-block
 extension would plug into). Single input, single output, CPU training, `cross_entropy`
@@ -62,12 +65,12 @@ loss, `adam`/`sgd`.
 
 ### 2.1 Tech stack
 
-| Layer    | Technology | Role |
-|----------|-----------|------|
+| Layer    | Technology                                       | Role                                                    |
+| -------- | ------------------------------------------------ | ------------------------------------------------------- |
 | Engine   | **Python 3.10, PyTorch ≥ 2.0, FastAPI, Uvicorn** | Model building, datasets, training, export, persistence |
-| View     | **React 19, TypeScript, Vite, React Flow v11** | Drag-drop canvas, inspector, training dashboard |
-| Protocol | **REST (JSON) + WebSocket** | REST for control plane, WS for live training telemetry |
-| Storage  | Filesystem (`engine/runs/`, `engine/data/`) | Job checkpoints, cached MNIST, uploaded datasets |
+| View     | **React 19, TypeScript, Vite, React Flow v11**   | Drag-drop canvas, inspector, training dashboard         |
+| Protocol | **REST (JSON) + WebSocket**                      | REST for control plane, WS for live training telemetry  |
+| Storage  | Filesystem (`engine/runs/`, `engine/data/`)      | Job checkpoints, cached MNIST, uploaded datasets        |
 
 No database, no auth, no GPU requirement, no `torchvision` dependency (image decoding is
 done with Pillow + NumPy so the install stays lean).
@@ -78,8 +81,18 @@ done with Pillow + NumPy so the install stays lean).
 
 ```json
 {
-  "nodes": [{ "id": "conv1", "type": "conv",
-              "params": { "out_channels": 16, "kernel_size": 3, "stride": 1, "padding": 1 } }],
+  "nodes": [
+    {
+      "id": "conv1",
+      "type": "conv",
+      "params": {
+        "out_channels": 16,
+        "kernel_size": 3,
+        "stride": 1,
+        "padding": 1
+      }
+    }
+  ],
   "edges": [{ "id": "e2", "source": "conv1", "target": "act1" }]
 }
 ```
@@ -92,7 +105,7 @@ have wires. Legacy PoC names still work (`cnn` → `conv`; `classifier` → expa
 `adaptive-pool → flatten → [linear → relu] → linear`, mirroring the original fixed head).
 
 **c) Lazy shape inference builds the model** (`engine/model_builder.py`, `GraphExecutor`).
-Conv and Linear layers are created *during a dry-run trace* with a dummy batch
+Conv and Linear layers are created _during a dry-run trace_ with a dummy batch
 `(2, in_channels, image_size, image_size)`, reading the actual incoming tensor shape — so
 users never declare `in_channels`/`in_features`. Execution is topological; a block with
 several incoming wires merges by element-wise sum (shape mismatches fail with an explicit
@@ -105,6 +118,7 @@ response and the code exporter.
 the last Linear block (the architecture defines its own demo problem).
 
 **e) Data loading** (`engine/datasets.py`).
+
 - `synthetic` — random images with a learnable label pattern (mean-pixel bins), zero setup.
 - `mnist` — raw IDX files downloaded once to `engine/data/mnist` (offline → synthetic fallback).
 - `imagefolder` — `<dataset_path>/<class>/*.png|jpg|jpeg|bmp|webp`, PIL-resized to
@@ -125,40 +139,40 @@ The server rebuilds + traces the graph, then emits code: pure chains become an
 demo data, training loop, and save — verified to run standalone.
 
 **h) Groups are view-only.** Grouping sets `parentId` membership on the master node list;
-edges are *never rewritten*. The current scope renders direct children; wires crossing a
+edges are _never rewritten_. The current scope renders direct children; wires crossing a
 collapsed group render as computed dashed “portal” stubs. Train/Validate/Export serialize
-the untouched master graph, so grouping cannot corrupt an architecture. Wiring *onto* a
+the untouched master graph, so grouping cannot corrupt an architecture. Wiring _onto_ a
 collapsed card auto-resolves when the group has a single entry/exit block, otherwise the UI
 asks you to open the group and wire the exact block.
 
 ### 2.3 Block reference
 
-| Block | Key params | Notes |
-|-------|-----------|-------|
-| `input` | `dataset` (synthetic\|mnist\|imagefolder), `dataset_path`, `image_size`, `batch_size`, `in_channels` | Exactly one per graph |
-| `conv` | `out_channels`, `kernel_size`, `stride`, `padding` | `in_channels` inferred |
-| `activation` | `type` (relu\|sigmoid\|tanh\|leaky_relu\|gelu\|softmax) | — |
-| `pool` | `pool` (max\|avg\|adaptive), `kernel_size`, `stride`, `adaptive_size` | — |
-| `flatten` | — | Required before `linear` on image tensors |
-| `linear` | `out_features` | `in_features` inferred; last one must equal class count |
-| `dropout` | `p` | Active only in training mode |
-| `output` | `loss` (cross_entropy), `optimizer` (adam\|sgd), `lr` | Exactly one per graph |
+| Block        | Key params                                                                                           | Notes                                                   |
+| ------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `input`      | `dataset` (synthetic\|mnist\|imagefolder), `dataset_path`, `image_size`, `batch_size`, `in_channels` | Exactly one per graph                                   |
+| `conv`       | `out_channels`, `kernel_size`, `stride`, `padding`                                                   | `in_channels` inferred                                  |
+| `activation` | `type` (relu\|sigmoid\|tanh\|leaky_relu\|gelu\|softmax)                                              | —                                                       |
+| `pool`       | `pool` (max\|avg\|adaptive), `kernel_size`, `stride`, `adaptive_size`                                | —                                                       |
+| `flatten`    | —                                                                                                    | Required before `linear` on image tensors               |
+| `linear`     | `out_features`                                                                                       | `in_features` inferred; last one must equal class count |
+| `dropout`    | `p`                                                                                                  | Active only in training mode                            |
+| `output`     | `loss` (cross_entropy), `optimizer` (adam\|sgd), `lr`                                                | Exactly one per graph                                   |
 
 ### 2.4 API endpoints (`engine/main.py`)
 
-| Method | Path | Body / params | Returns |
-|--------|------|---------------|---------|
-| GET | `/api/health` | — | `{ok, service}` |
-| POST | `/api/validate` | `{nodes, edges}` | `{ok, order, params, config, shapes}` or 400 with reason |
-| POST | `/api/train` | `{graph, epochs 1–100, save_format pt\|pth\|pkl, save_mode weights_only\|full}` | `{job_id, …status}` (job runs in background) |
-| GET | `/api/jobs` | — | All job summaries |
-| GET | `/api/jobs/{id}` | — | Status, `current_epoch`, `history[]`, `logs[]`, `save_path`, `params`, `dataset_info`, `error` |
-| WS | `/ws/jobs/{id}` | — | `init` → `log`/`progress` stream → `final`; `ping` keepalive replays state |
-| GET | `/api/download/{id}` | — | The saved model file (404 until training finishes) |
-| POST | `/api/export/python` | `{graph, epochs}`, `?as_file=false` for raw text | `model.py` download / code |
-| POST | `/api/export/notebook` | `{graph, epochs}` | `model.ipynb` download (markdown + code cells) |
-| POST | `/api/upload` | multipart `file` (.zip), optional `target` | `{path, uploads}` server-side dataset path |
-| GET | `/api/uploads` | — | Previously uploaded dataset paths |
+| Method | Path                   | Body / params                                                                   | Returns                                                                                        |
+| ------ | ---------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| GET    | `/api/health`          | —                                                                               | `{ok, service}`                                                                                |
+| POST   | `/api/validate`        | `{nodes, edges}`                                                                | `{ok, order, params, config, shapes}` or 400 with reason                                       |
+| POST   | `/api/train`           | `{graph, epochs 1–100, save_format pt\|pth\|pkl, save_mode weights_only\|full}` | `{job_id, …status}` (job runs in background)                                                   |
+| GET    | `/api/jobs`            | —                                                                               | All job summaries                                                                              |
+| GET    | `/api/jobs/{id}`       | —                                                                               | Status, `current_epoch`, `history[]`, `logs[]`, `save_path`, `params`, `dataset_info`, `error` |
+| WS     | `/ws/jobs/{id}`        | —                                                                               | `init` → `log`/`progress` stream → `final`; `ping` keepalive replays state                     |
+| GET    | `/api/download/{id}`   | —                                                                               | The saved model file (404 until training finishes)                                             |
+| POST   | `/api/export/python`   | `{graph, epochs}`, `?as_file=false` for raw text                                | `model.py` download / code                                                                     |
+| POST   | `/api/export/notebook` | `{graph, epochs}`                                                               | `model.ipynb` download (markdown + code cells)                                                 |
+| POST   | `/api/upload`          | multipart `file` (.zip), optional `target`                                      | `{path, uploads}` server-side dataset path                                                     |
+| GET    | `/api/uploads`         | —                                                                               | Previously uploaded dataset paths                                                              |
 
 ### 2.5 View internals (`view/src/`)
 
@@ -192,7 +206,16 @@ First run: leave the input block on `synthetic`, press **▶ Train** — no file
 pydantic, python-multipart`).
 
 ### 2.7 Limits & next steps
+
 CPU-only training; one input / one output per graph; branch merges require equal shapes;
 `cross_entropy` loss only. Natural extensions: transformer blocks (the executor already
 supports arbitrary DAGs — new block types plug into `GraphExecutor` + `FIELDS`), GPU
 selection, run comparison, and graph persistence/sharing.
+
+# Home screen preview
+
+![preview](previews/home.png)
+
+## Grouped model view
+
+![preview](previews/grouped.png)
