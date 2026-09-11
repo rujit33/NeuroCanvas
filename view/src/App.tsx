@@ -387,8 +387,12 @@ function Studio() {
         const stub = es.find((e) => `portal:${e.id}` === id);
         return stub ? stub.id : id;
       };
+      // stub ids (portal:<realId>) are view-only: map select + remove back to real
+      // so selection round-trips into master state and survives viewEdges rebuilds
       const mapped = changes.map((c) =>
-        c.type === "remove" ? { ...c, id: real(c.id) } : c,
+        c.type === "select" || c.type === "remove"
+          ? { ...c, id: real(c.id) }
+          : c,
       );
       return applyEdgeChanges(mapped, es);
     });
@@ -554,6 +558,7 @@ function Studio() {
         id: `e-${Date.now().toString(36)}${i ? `-${i}` : ""}`,
         source: idMap.get(e.source)!,
         target: idMap.get(e.target)!,
+        selected: false,
       }));
       setMasterNodes((ns) => [...ns, ...fresh]);
       setMasterEdges((es) => [...es, ...freshEdges]);
