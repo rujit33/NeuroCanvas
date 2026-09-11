@@ -218,7 +218,7 @@ function Studio() {
   const [selectedId, setSelectedId] = useState<string | null>("input");
   const [epochs, setEpochs] = useState(5);
   const [saveFormat, setSaveFormat] = useState("pt");
-  const [saveMode, setSaveMode] = useState("weights_only");
+  //const [saveMode, setSaveMode] = useState("weights_only");
   const [job, setJob] = useState<JobState | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [logsOpen, setLogsOpen] = useState(true);
@@ -250,7 +250,7 @@ function Studio() {
   );
   const viewNodes: Node[] = useMemo(() => {
     return kidsOf(masterNodes, scope).map((n) => {
-      const { parentId: _p, ...rest } = n as Node & { parentId?: string };
+     const { parentId: _p, ...rest } = n as Node & { parentId?: string };
       const s = shapeById.get(n.id);
       const label = s
         ? `${fmtDims(s.in) ?? "?"}→${fmtDims(s.out) ?? "?"}`
@@ -685,7 +685,7 @@ function Studio() {
         graph: graph(),
         epochs,
         save_format: saveFormat,
-        save_mode: saveMode,
+        //save_mode: saveMode,
       });
       const jobId = r.job_id;
       setNotice(`Training started: ${jobId}`);
