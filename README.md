@@ -1,5 +1,10 @@
 # VisualML — Build Neural Networks Visually
 
+> **Deployed:** Frontend — https://neuro-canvas-front.vercel.app/ · Backend — https://neurocanvas.onrender.com
+> **Note:** the **▶ Train** button is currently hidden in the UI (commented out in `view/src/App.tsx`)
+> to protect the shared Render backend from heavy training load. Validate / Export / JSON
+> import-export all work in local and production.
+
 A modular, visual workbench for creating neural networks: drag blocks (Input, Conv,
 Activation, Pool, Flatten, Linear, Dropout, Output) onto a canvas, wire them together,
 configure them in an inspector, press **Train**, and watch live loss curves stream back.
@@ -334,7 +339,7 @@ training), **⇩ JSON**, **⇧ Import**, **i**.
   graph): `{job_id, status (queued/running/done/error), epochs, current_epoch, history,
   logs, save_format, save_mode, save_path, params, dataset_info, error}`.
   Failures set `status: error`, `error: "Type: message"`, plus a traceback-capped log line.
-- `GET /api/download/{id}` serves the file (404 for unknown jobs or unfinished training).
+- `GET /api/download/{id}` serves the file (404 for unknown jobs or unfinished training), then deletes the model file + job dir via `BackgroundTasks` so `.pt/.pth/.pkl` never accumulate on the shared server.
 - **WebSocket** `WS /ws/jobs/{id}`: unknown ids get `{type: error}` and a closed socket.
   Each subscriber owns a bounded queue (200, drops on full). Message types: `init` (full
   summary on connect, so late joiners see everything), `log` (one line), `progress`
@@ -360,7 +365,9 @@ training), **⇩ JSON**, **⇧ Import**, **i**.
   `torch.save("model.pt")` — verified by tests to `compile`, import without running
   `main()`, and forward a `(2, C, H, W)` batch to `[2, classes]`. The notebook wraps the
   same code in `{nbformat: 4, nbformat_minor: 5}` with a markdown header cell + one code
-  cell. Server copies land at `engine/runs/_export_model.py` / `.ipynb`.
+  cell. Server writes each export to an OS temp file (`tempfile.NamedTemporaryFile`) and
+  deletes it via `BackgroundTasks` after the response streams — nothing stays in
+  `engine/runs/` (ephemeral create → download → delete, safe for shared Render).
 - Export is architecture-only and one-way (positions/groups are not preserved) — unlike
   JSON persistence (§2.14), which is lossless.
 
@@ -412,7 +419,7 @@ training), **⇩ JSON**, **⇧ Import**, **i**.
 | GET | `/api/jobs` | — | All job summaries |
 | GET | `/api/jobs/{id}` | — | Status, `current_epoch`, `history[]`, `logs[]`, `save_path`, `params`, `dataset_info`, `error` |
 | WS | `/ws/jobs/{id}` | — | `init` → `log`/`progress` stream → `final`; `ping` keepalive replays state |
-| GET | `/api/download/{id}` | — | The saved model file (404 until training finishes) |
+| GET | `/api/download/{id}` | — | The saved model file (404 until training finishes; deleted from server after download) |
 | POST | `/api/export/python` | `{graph, epochs}`, `?as_file=false` for raw text | `model.py` download / code |
 | POST | `/api/export/notebook` | `{graph, epochs}` | `model.ipynb` download (markdown + code cells) |
 | POST | `/api/upload` | multipart `file` (.zip), optional `target` | `{path, uploads}` server-side dataset path |
@@ -444,7 +451,7 @@ training), **⇩ JSON**, **⇧ Import**, **i**.
   `fmtDims` (drops the traced batch dim, joins the rest with `x`);
   `nodeIdFromMessage` (regex fallback extracting a block id from legacy string errors —
   structured `error.node_id` always wins).
-- `api.ts` — `API`/`WS` base URLs (`http://127.0.0.1:8000`, `ws://…`), `serialize()`
+- `api.ts` — env-driven `API`/`WS` base URLs (`VITE_API_URL ?? http://127.0.0.1:8000`, `VITE_WS_URL ?? API http→ws` so `https` becomes `wss` automatically), `serialize()`
   (drops group proxies, maps to `{id, type: kind, params}` + `{id, source, target}`),
   `postJSON()` (throws `detail` on error while keeping the full structured body on
   `err.payload` for `validate()` to parse), `downloadBlob()` (POSTs to the engine and
@@ -583,7 +590,7 @@ npm run dev                                      # -> http://localhost:5173
 python -m pytest tests/ -q                       # -> 30 passed
 ```
 
-First run: leave the input block on `synthetic`, press **▶ Train** — no files needed.
+First run (local): leave the input block on `synthetic`, press **▶ Train** — no files needed. (Train is hidden in production to protect the shared backend; Validate / Export / JSON work everywhere.)
 `engine/requirements.txt` pins the backend deps (`fastapi, uvicorn, torch, numpy, pillow,
 pydantic, python-multipart`).
 
@@ -604,6 +611,74 @@ pydantic, python-multipart`).
 - Validation batch for shape tracing is fixed at 2; synthetic data is fixed at 2000/500.
 - A 1×1 spatial collapse downstream of pooling is a warning, not an error, until an op
   actually fails on it.
+
+## 3) Deployment — local and production
+
+| Env | Frontend | Backend |
+| --- | -------- | ------- |
+| Local | `npm run dev` in `view/` → http://localhost:5173 (`view/.env.development`: `VITE_API_URL=http://127.0.0.1:8000`) | `python -m uvicorn main:app --reload --port 8000` in `engine/` |
+| Production | https://neuro-canvas-front.vercel.app/ (`view/.env.production`: `VITE_API_URL=https://neurocanvas.onrender.com`; same value set as `VITE_API_URL` in Vercel) | https://neurocanvas.onrender.com (`ALLOWED_ORIGINS=https://neuro-canvas-front.vercel.app` on Render) |
+
+- `view/src/api.ts`: `API = VITE_API_URL ?? http://127.0.0.1:8000` (trailing `/` stripped); `WS = VITE_WS_URL ?? API.replace(/^http/, "ws")`, so `https` automatically becomes `wss`. No hardcoded URLs.
+- `engine/main.py`: `ALLOWED_ORIGINS` read from env (default `https://neuro-canvas-front.vercel.app, http://localhost:5173, http://127.0.0.1:5173`); explicit list, `allow_credentials=True`, no wildcard — the industry-standard fix for the old `["...", "*"]` combo.
+- `.env` files: `view/.env.example`, `view/.env.development`, `view/.env.production`, `engine/.env.example` are committed (public URLs only); real local secrets go in `*.local` / `engine/.env`, which are gitignored.
+- Server disk: exports use `tempfile.NamedTemporaryFile` + `BackgroundTasks(os.unlink)`; `GET /api/download/{id}` deletes the model file + job dir after streaming. Upload zips still extract to `engine/data/uploads/` (gitignored) and are the only persistent server files.
+
+## 4) Requirements
+
+### 4.1 What this project does / how it does it
+
+VisualML turns PyTorch CNN/MLP construction into a LEGO-like graph activity: the React Flow
+canvas (`view/src/App.tsx` + `graph.ts`) holds the master node/edge list with group
+`parentId`s; `api.ts::serialize` strips group proxies and POSTs `{nodes: [{id, type: kind,
+params}], edges: [{id, source, target}]}`; the FastAPI engine runs one shared staged
+pipeline (`model_builder.py::validate_pipeline` = schema → structural → semantic → params
+→ trace dry-run with dummy `(2, C, H, W)` batch → dataset class-count check) and returns
+either `{order, params, config, shapes, warnings}` or a structured `ValidationError
+{stage, node_id, op, expected, got, reason, hint}` that the canvas uses to select and
+reveal the offending block. Training (`trainer.py`) reuses the same pipeline fail-fast,
+then runs epochs in a worker thread with per-epoch WS fan-out (`init/log/progress/ping/
+final`); export (`exporter.py`) rebuilds + traces the graph server-side and emits
+concrete-dim `model.py` / `model.ipynb`; the canvas itself round-trips losslessly as
+`visualML v1 JSON {version, app, exportedAt, nodes, edges}` with positions + `parentId`s.
+
+### 4.2 Functionalities / features
+
+- Drag-drop palette (Input, Conv, Activation, Pool, Flatten, Linear, Dropout, Output) with search, unlimited instances, `defaultParams` + `FIELDS`-driven inspector.
+- Free DAG wiring (chains, branches, skips, merges by element-add), duplicate/self-loop guards, Delete-key + per-wire delete.
+- Nested collapsible groups with breadcrumb scope, portal-stub wires, boundary auto-resolve, cascade delete / dissolve-keeps-blocks (view-only; engine never sees groups).
+- 6-stage Validate with topological order, per-block `in → out` shapes, param counts, warnings, and error → node highlight even inside collapsed groups.
+- Train (currently hidden in prod): epochs 1–100, `save_format .pt/.pth/.pkl`, `save_mode weights_only/full`, live loss curve + epoch table + logs over WebSocket, one-shot model download link.
+- Export `.py` (Sequential for chains, explicit executor for branches) and `.ipynb` (nbformat 4), verified by tests to compile + forward `(2, C, H, W) → [2, classes]`.
+- JSON `⇩ / ⇧ Import` with strict `parseGraphFile` validation + immediate revalidate; `i` guide modal (Format + Available Nodes tabs) for LLM-assisted graph authoring.
+- Dataset upload (`.zip` of class folders → `POST /api/upload` → `engine/data/uploads/`), `GET /api/uploads` listing, `synthetic/mnist/imagefolder` loaders.
+
+### 4.3 Functional requirements fulfilled
+
+- FR1: Visually compose a valid image-classification DAG without writing code — palette, wiring, inspector defaults, lazy `in_channels`/`in_features` inference.
+- FR2: Reject invalid graphs with actionable errors — 6 stages + structured `{stage, node_id, hint}` + canvas reveal.
+- FR3: Train a composed graph and observe progress — background jobs, `history/logs`, WS telemetry, `GET /api/jobs[/{id}]`.
+- FR4: Take artifacts with you — one-shot `.pt/.pth/.pkl` download, ephemeral `.py/.ipynb` export, lossless v1 JSON save/load.
+- FR5: Work identically local and production — env-driven `VITE_API_URL` / `ALLOWED_ORIGINS`, no hardcoded hosts.
+- FR6: Not exhaust shared-server disk — tempfile + `BackgroundTasks` cleanup on every file response.
+
+### 4.4 Non-functional requirements fulfilled
+
+- NFR1 Usability: LEGO-like canvas, searchable palette, inspector hints, empty states, dark-forced RF chrome, keyboard delete, guide modal.
+- NFR2 Reliability: single `validate_pipeline` shared by validate/train/worker/export-trace; 30 pytest regression tests; fail-fast train; bounded WS queue (200) + 20 s keepalive + late-joiner `init` replay.
+- NFR3 Portability: no `torchvision`/GPU/DB/auth; Pillow + NumPy decoding; exports run anywhere PyTorch runs.
+- NFR4 Maintainability: modular `engine/*.py` + `view/src/*` boundaries, `graph.ts` as palette/field source of truth, stable REST/WS envelopes, typed errors.
+- NFR5 Security (basic): explicit CORS origins (no `*` + credentials), validation clamps (epochs, formats, params), no silent value coercion, gitignored env/artifacts/uploads.
+- NFR6 Scalability (prototype-level): stateless exports (tempfiles, no collisions between concurrent users); training remains single-process (see limits).
+
+## 5) Limitations
+
+- Training is CPU-only, single input / single output, `cross_entropy` + `adam/sgd` (mom. 0.9) only; branch merge = element-add with identical shapes (no concat/broadcast adapter).
+- Jobs + subscribers live in in-memory dicts: lost on restart, unbounded, single-process `asyncio.create_task` + `to_thread` — concurrent trains contend CPU; no auth, queue, persistence, or multi-worker.
+- `synthetic` is fixed 2000/500 with mean-pixel labels; trace batch fixed at 2; MNIST failure silently falls back to synthetic (cause only in `dataset_info.source`).
+- Uploads persist unguarded (zip-slip/size/auth not enforced) and are never auto-cleaned, unlike exports/downloads.
+- `torch.save` / pickle artifacts are trusted-load only; `full` checkpoints embed graph + optimizer state.
+- Minor: Model Summary per-block column reads `nodeParams` while the engine sends `num_params` (renders `—`, totals fine); `softmax` warns (`softmax_logits`); 1×1 collapse is a warning until an op actually fails; `make_loss` lists `nll` but validation rejects it.
 
 # Home screen preview
 

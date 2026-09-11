@@ -235,6 +235,9 @@ function Studio() {
   const wsRef = useRef<WebSocket | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const clipRef = useRef<{ nodes: Node[]; roots: string[]; edges: Edge[] } | null>(
+    null,
+  );
   const [showGuide, setShowGuide] = useState(false);
   const [guideTab, setGuideTab] = useState<"format" | "nodes">("format");
 
@@ -417,6 +420,39 @@ function Studio() {
     [masterNodes, masterEdges],
   );
 
+  /** Ambiguous-group fallback: entry = internal source, exit = internal sink. */
+  const groupFallback = useCallback(
+    (groupId: string, side: "in" | "out"): string | null => {
+      const members: Node[] = [];
+      const walk = (gid: string) => {
+        for (const m of masterNodes) {
+          if ((m.parentId ?? undefined) === gid) {
+            if (m.type === "group") walk(m.id);
+            else members.push(m);
+          }
+        }
+      };
+      walk(groupId);
+      if (members.length === 0) return null;
+      const ids = new Set(members.map((m) => m.id));
+      const hasIn = new Set<string>();
+      const hasOut = new Set<string>();
+      for (const e of masterEdges) {
+        if (ids.has(e.source) && ids.has(e.target)) {
+          hasOut.add(e.source);
+          hasIn.add(e.target);
+        }
+      }
+      if (side === "in")
+        return members.find((m) => !hasIn.has(m.id))?.id ?? members[0].id;
+      const rev = [...members].reverse();
+      return (
+        rev.find((m) => !hasOut.has(m.id))?.id ?? members[members.length - 1].id
+      );
+    },
+    [masterNodes, masterEdges],
+  );
+
   const onConnect = useCallback(
     (c: Connection) => {
       if (!c.source || !c.target) return;
@@ -424,7 +460,7 @@ function Studio() {
       const sn = byId.get(source),
         tn = byId.get(target);
       if (sn?.type === "group") {
-        const exit = boundary(source, "out");
+        const exit = boundary(source, "out") ?? groupFallback(source, "out");
         if (!exit) {
           setNotice(
             `"${sn.data.name}" has no single exit block — open it and wire a specific block.`,
@@ -434,7 +470,7 @@ function Studio() {
         source = exit;
       }
       if (tn?.type === "group") {
-        const entry = boundary(target, "in");
+        const entry = boundary(target, "in") ?? groupFallback(target, "in");
         if (!entry) {
           setNotice(
             `"${tn.data.name}" has no single entry block — open it and wire a specific block.`,
@@ -451,8 +487,115 @@ function Studio() {
           : [...es, { id, source, target, animated: true }],
       );
     },
-    [byId, boundary],
+    [byId, boundary, groupFallback],
   );
+
+  /* ----- copy/paste within current scope (Ctrl+C / Ctrl+V, Ctrl+D duplicates) ----- */
+  useEffect(() => {
+    const snapshot = () => {
+      const roots = selectedIds.filter((id) => {
+        const n = byId.get(id);
+        return n && (n.parentId ?? undefined) === (scope ?? undefined);
+      });
+      if (roots.length === 0) return null;
+      const inSet = new Set<string>(roots);
+      const nodes: Node[] = [];
+      const walk = (gid: string) => {
+        for (const m of masterNodes) {
+          if ((m.parentId ?? undefined) === gid && !inSet.has(m.id)) {
+            inSet.add(m.id);
+            nodes.push(m);
+            if (m.type === "group") walk(m.id);
+          }
+        }
+      };
+      for (const r of roots) {
+        const n = byId.get(r);
+        if (!n) continue;
+        nodes.push(n);
+        if (n.type === "group") walk(n.id);
+      }
+      // internal edges only (both ends copied); master edges are real ids, never portal stubs
+      const edges = masterEdges.filter(
+        (e) => inSet.has(e.source) && inSet.has(e.target),
+      );
+      return { nodes, roots, edges };
+    };
+    const paste = (snap: { nodes: Node[]; roots: string[]; edges: Edge[] }) => {
+      const rootSet = new Set(snap.roots);
+      const idMap = new Map<string, string>();
+      for (const n of snap.nodes) {
+        const kind = (n.data as { kind?: string }).kind ?? "block";
+        idMap.set(n.id, n.type === "group" ? `g-${seq++}` : `${kind}-${seq++}`);
+      }
+      const fresh: Node[] = snap.nodes.map((n) => {
+        const data = structuredClone(n.data);
+        if (n.type === "group")
+          (data as Record<string, unknown>).groupId = idMap.get(n.id);
+        const node: Node = {
+          ...n,
+          id: idMap.get(n.id)!,
+          position: { x: n.position.x + 60, y: n.position.y + 60 },
+          data,
+          selected: false,
+        };
+        if (rootSet.has(n.id)) {
+          if (scope) (node as Node & { parentId?: string }).parentId = scope;
+          else delete (node as Node & { parentId?: string }).parentId;
+        } else {
+          const np = (n.parentId ?? undefined) as string | undefined;
+          (node as Node & { parentId?: string }).parentId =
+            np && idMap.has(np) ? idMap.get(np) : (scope ?? undefined);
+        }
+        return node;
+      });
+      const freshEdges: Edge[] = snap.edges.map((e, i) => ({
+        ...e,
+        id: `e-${Date.now().toString(36)}${i ? `-${i}` : ""}`,
+        source: idMap.get(e.source)!,
+        target: idMap.get(e.target)!,
+      }));
+      setMasterNodes((ns) => [...ns, ...fresh]);
+      setMasterEdges((es) => [...es, ...freshEdges]);
+      setSelectedIds(fresh.map((n) => n.id));
+      if (fresh.length) setSelectedId(fresh[0].id);
+      setNotice(
+        `Pasted ${fresh.length} block${fresh.length === 1 ? "" : "s"}${freshEdges.length ? ` + ${freshEdges.length} wire${freshEdges.length === 1 ? "" : "s"}` : ""}`,
+      );
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (showGuide) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      )
+        return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === "c" || k === "d") {
+        const snap = snapshot();
+        if (!snap) return;
+        e.preventDefault();
+        clipRef.current = snap;
+        if (k === "d") paste(snap);
+        else
+          setNotice(
+            `Copied ${snap.nodes.length} block${snap.nodes.length === 1 ? "" : "s"} — Ctrl+V to paste`,
+          );
+      } else if (k === "v") {
+        const snap = clipRef.current;
+        if (!snap) return;
+        e.preventDefault();
+        paste(snap);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [masterNodes, masterEdges, selectedIds, byId, scope, showGuide]);
 
   /* ----- drag new blocks from palette ----- */
   const onDrop = useCallback(
@@ -977,6 +1120,9 @@ function Studio() {
             fitView
             multiSelectionKeyCode="Shift"
             deleteKeyCode="Delete"
+            selectionOnDrag
+            selectionKeyCode="Shift"
+            panOnDrag
           >
             <Background />
             <Controls />
