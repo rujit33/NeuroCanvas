@@ -2,5 +2,31 @@ engine/venv
 view/node_modules
 AGENTS.md
 opencode.json
-engine/data 
+engine/data
 engine/runs
+
+# env
+.env
+.env.local
+.env.*.local
+engine/.env
+view/.env.local
+view/.env.production
+
+# python
+__pycache__/
+*.pyc
+
+# model artifacts / training outputs
+*.pt
+*.pth
+*.pkl
+runs/
+engine/runs/
+engine/data/uploads/
+
+# notebook exports
+*.ipynb
+
+# frontend build
+view/dist

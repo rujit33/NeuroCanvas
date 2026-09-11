@@ -1,7 +1,7 @@
 import type { Edge, Node } from "reactflow";
 
-export const API = "http://127.0.0.1:8000";
-export const WS = "ws://127.0.0.1:8000";
+export const API = (import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+export const WS = import.meta.env.VITE_WS_URL ?? API.replace(/^http/, "ws");
 
 export function serialize(nodes: Node[], edges: Edge[]) {
   // Group proxies are view-only; the engine sees the flat block graph.

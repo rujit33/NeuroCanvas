@@ -1,10 +1,29 @@
 import type { Edge, Node } from "reactflow";
-import { API, WS, downloadBlob, downloadText, postJSON, serialize } from "./api";
+import {
+  API,
+  WS,
+  downloadBlob,
+  downloadText,
+  postJSON,
+  serialize,
+} from "./api";
 import ConfigPanel from "./components/ConfigPanel";
 import LogsPanel from "./components/LogsPanel";
 import GroupNode from "./components/GroupNode";
 import MlNode from "./components/MlNode";
-import { KIND_META, PALETTE, defaultParams, fmtDims, nodeIdFromMessage, type JobState, type NodeKind, type ValidateErrorInfo, type ValidateShape, type ValidateSuccess, type WireInfo } from "./graph";
+import {
+  KIND_META,
+  PALETTE,
+  defaultParams,
+  fmtDims,
+  nodeIdFromMessage,
+  type JobState,
+  type NodeKind,
+  type ValidateErrorInfo,
+  type ValidateShape,
+  type ValidateSuccess,
+  type WireInfo,
+} from "./graph";
 
 const nodeTypes = { ml: MlNode, group: GroupNode };
 const DEFAULT_EDGE_OPTIONS = { interactionWidth: 28 };
@@ -19,7 +38,11 @@ function kidsOf(nodes: Node[], scope: string | null): Node[] {
 }
 
 /** Walk up to the direct child of `scope` that contains `id` (or null if outside). */
-function directChild(nodes: Node[], id: string, scope: string | null): string | null {
+function directChild(
+  nodes: Node[],
+  id: string,
+  scope: string | null,
+): string | null {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   let cur = byId.get(id);
   if (!cur) return null;
@@ -65,8 +88,7 @@ const GUIDE_EXAMPLE = `{
   ]
 }`;
 
-const GUIDE_PROMPT =
-  `Create a visualML v1 JSON graph with nodes/edges matching the schema above (kind is an open-ended block-type string with a params object). Only output JSON.`;
+const GUIDE_PROMPT = `Create a visualML v1 JSON graph with nodes/edges matching the schema above (kind is an open-ended block-type string with a params object). Only output JSON.`;
 
 const GUIDE_COPY = `visualML v1 JSON graph format
 Top level: {version: 1, app: "visualML", exportedAt: ISO-string, nodes: [...], edges: [...]}.
@@ -88,26 +110,47 @@ function parseGraphFile(text: string): { nodes: Node[]; edges: Edge[] } {
   } catch {
     throw new Error("not valid JSON");
   }
-  if (!isRecord(doc) || !Array.isArray(doc.nodes) || !Array.isArray(doc.edges)) {
+  if (
+    !isRecord(doc) ||
+    !Array.isArray(doc.nodes) ||
+    !Array.isArray(doc.edges)
+  ) {
     throw new Error("expected {nodes: [...], edges: [...]}");
   }
   const nodes = (doc.nodes as unknown[]).map((v, i) => {
-    if (!isRecord(v) || typeof v.id !== "string") throw new Error(`nodes[${i}].id must be a string`);
+    if (!isRecord(v) || typeof v.id !== "string")
+      throw new Error(`nodes[${i}].id must be a string`);
     const pos = v.position as unknown;
-    if (!isRecord(pos) || typeof pos.x !== "number" || typeof pos.y !== "number") {
-      throw new Error(`nodes[${i}] (${v.id}).position must be {x: number, y: number}`);
+    if (
+      !isRecord(pos) ||
+      typeof pos.x !== "number" ||
+      typeof pos.y !== "number"
+    ) {
+      throw new Error(
+        `nodes[${i}] (${v.id}).position must be {x: number, y: number}`,
+      );
     }
-    if (!isRecord(v.data)) throw new Error(`nodes[${i}] (${v.id}).data must be an object`);
+    if (!isRecord(v.data))
+      throw new Error(`nodes[${i}] (${v.id}).data must be an object`);
     const type = v.type === undefined ? "ml" : v.type;
-    if (type !== "ml" && type !== "group") throw new Error(`nodes[${i}] (${v.id}).type must be "ml" or "group"`);
+    if (type !== "ml" && type !== "group")
+      throw new Error(`nodes[${i}] (${v.id}).type must be "ml" or "group"`);
     if (type === "ml") {
       const kind = (v.data as Record<string, unknown>).kind;
-      if (typeof kind !== "string" || !kind) throw new Error(`nodes[${i}] (${v.id}).data.kind must be a non-empty string`);
+      if (typeof kind !== "string" || !kind)
+        throw new Error(
+          `nodes[${i}] (${v.id}).data.kind must be a non-empty string`,
+        );
     }
     return { ...v, type } as Node;
   });
   const edges = (doc.edges as unknown[]).map((v, i) => {
-    if (!isRecord(v) || typeof v.id !== "string" || typeof v.source !== "string" || typeof v.target !== "string") {
+    if (
+      !isRecord(v) ||
+      typeof v.id !== "string" ||
+      typeof v.source !== "string" ||
+      typeof v.target !== "string"
+    ) {
       throw new Error(`edges[${i}] needs string id/source/target`);
     }
     return v as unknown as Edge;
@@ -118,7 +161,12 @@ function parseGraphFile(text: string): { nodes: Node[]; edges: Edge[] } {
 /* ------------------------------- studio ---------------------------------- */
 
 function initialNodes(): Node[] {
-  const mk = (id: string, kind: NodeKind, x: number, params?: Record<string, string | number>): Node => ({
+  const mk = (
+    id: string,
+    kind: NodeKind,
+    x: number,
+    params?: Record<string, string | number>,
+  ): Node => ({
     id,
     type: "ml",
     position: { x, y: 180 },
@@ -138,7 +186,10 @@ function initialNodes(): Node[] {
 function initialEdges(): Edge[] {
   const ids = ["input", "conv1", "act1", "pool1", "flat1", "fc1", "output"];
   return ids.slice(1).map((t, i) => ({
-    id: `e${i + 1}`, source: ids[i], target: t, animated: true,
+    id: `e${i + 1}`,
+    source: ids[i],
+    target: t,
+    animated: true,
   }));
 }
 
@@ -175,8 +226,11 @@ function Studio() {
   const [palQuery, setPalQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [summary, setSummary] = useState<{
-    order: string[]; params: number | null; shapes: ValidateShape[];
-    config?: Record<string, unknown> | null; warnings: string[];
+    order: string[];
+    params: number | null;
+    shapes: ValidateShape[];
+    config?: Record<string, unknown> | null;
+    warnings: string[];
   } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -184,19 +238,28 @@ function Studio() {
   const [showGuide, setShowGuide] = useState(false);
   const [guideTab, setGuideTab] = useState<"format" | "nodes">("format");
 
-  const byId = useMemo(() => new Map(masterNodes.map((n) => [n.id, n])), [masterNodes]);
+  const byId = useMemo(
+    () => new Map(masterNodes.map((n) => [n.id, n])),
+    [masterNodes],
+  );
 
   /* ----- derived view for current scope (portal stubs computed, never stored) ----- */
-  const shapeById = useMemo(() => new Map((summary?.shapes ?? []).map((s) => [s.id, s])), [summary]);
+  const shapeById = useMemo(
+    () => new Map((summary?.shapes ?? []).map((s) => [s.id, s])),
+    [summary],
+  );
   const viewNodes: Node[] = useMemo(() => {
     return kidsOf(masterNodes, scope).map((n) => {
       const { parentId: _p, ...rest } = n as Node & { parentId?: string };
       const s = shapeById.get(n.id);
-      const label = s ? `${fmtDims(s.in) ?? "?"}→${fmtDims(s.out) ?? "?"}` : null;
+      const label = s
+        ? `${fmtDims(s.in) ?? "?"}→${fmtDims(s.out) ?? "?"}`
+        : null;
       const withShape = label ? { ...n.data, shape: label } : n.data;
       if (n.type === "group") {
         return {
-          ...rest, parentId: undefined,
+          ...rest,
+          parentId: undefined,
           data: { ...withShape, count: countMembers(masterNodes, n.id) },
         };
       }
@@ -214,8 +277,12 @@ function Studio() {
         out.push(e); // fully visible real edge
       } else if (a !== b) {
         out.push({
-          ...e, id: `portal:${e.id}`, source: a, target: b,
-          style: { strokeDasharray: "6 4" }, data: { ...(e.data ?? {}), realId: e.id, portal: true },
+          ...e,
+          id: `portal:${e.id}`,
+          source: a,
+          target: b,
+          style: { strokeDasharray: "6 4" },
+          data: { ...(e.data ?? {}), realId: e.id, portal: true },
         });
       }
       // a === b but not the raw endpoints => both ends hidden inside one collapsed group
@@ -223,19 +290,29 @@ function Studio() {
     return out;
   }, [masterNodes, masterEdges, scope]);
 
-  const selected = selectedId ? byId.get(selectedId) ?? null : null;
-  const selectedForPanel = selected && selected.type === "group"
-    ? { ...selected, data: { ...selected.data, count: countMembers(masterNodes, selected.id) } }
-    : selected;
+  const selected = selectedId ? (byId.get(selectedId) ?? null) : null;
+  const selectedForPanel =
+    selected && selected.type === "group"
+      ? {
+          ...selected,
+          data: {
+            ...selected.data,
+            count: countMembers(masterNodes, selected.id),
+          },
+        }
+      : selected;
 
   /* ----- selected wires (portal stubs map back to the real edge) ----- */
-  const nameOf = useCallback((id: string): string => {
-    const n = byId.get(id);
-    if (!n) return id;
-    if (n.type === "group") return `🗂 ${(n.data.name as string) || id}`;
-    const kind = (n.data as { kind: string }).kind;
-    return `${KIND_META[kind]?.label ?? kind} (${id})`;
-  }, [byId]);
+  const nameOf = useCallback(
+    (id: string): string => {
+      const n = byId.get(id);
+      if (!n) return id;
+      if (n.type === "group") return `🗂 ${(n.data.name as string) || id}`;
+      const kind = (n.data as { kind: string }).kind;
+      return `${KIND_META[kind]?.label ?? kind} (${id})`;
+    },
+    [byId],
+  );
 
   const selectedWires: WireInfo[] = useMemo(() => {
     const seen = new Set<string>();
@@ -246,29 +323,45 @@ function Studio() {
       seen.add(rid);
       const e = masterEdges.find((m) => m.id === rid);
       if (!e) continue;
-      out.push({ id: e.id, source: e.source, target: e.target, sourceName: nameOf(e.source), targetName: nameOf(e.target) });
+      out.push({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceName: nameOf(e.source),
+        targetName: nameOf(e.target),
+      });
     }
     return out;
   }, [selectedEdgeIds, masterEdges, nameOf]);
 
   const deleteEdge = useCallback((id: string) => {
     setMasterEdges((es) => es.filter((e) => e.id !== id));
-    setSelectedEdgeIds((ids) => ids.filter((v) => v !== id && v !== `portal:${id}`));
+    setSelectedEdgeIds((ids) =>
+      ids.filter((v) => v !== id && v !== `portal:${id}`),
+    );
   }, []);
 
   /* ----- stable RF callbacks (new identities retrigger RF store effects) ----- */
-  const onNodeClick = useCallback((_e: unknown, n: Node) => setSelectedId(n.id), []);
+  const onNodeClick = useCallback(
+    (_e: unknown, n: Node) => setSelectedId(n.id),
+    [],
+  );
   const onPaneClick = useCallback(() => setSelectedId(null), []);
-  const onSelectionChange = useCallback((p: { nodes: Node[]; edges: Edge[] }) => {
-    setSelectedIds(p.nodes.map((n) => n.id));
-    setSelectedEdgeIds(p.edges.map((e) => e.id));
-  }, []);
+  const onSelectionChange = useCallback(
+    (p: { nodes: Node[]; edges: Edge[] }) => {
+      setSelectedIds(p.nodes.map((n) => n.id));
+      setSelectedEdgeIds(p.edges.map((e) => e.id));
+    },
+    [],
+  );
 
   /* ----- RF change handlers: positions sync to master, deletes cascade ----- */
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setMasterNodes((ns) => {
       let next = applyNodeChanges(changes, ns);
-      const removed = changes.filter((c) => c.type === "remove").map((c) => (c as { id: string }).id);
+      const removed = changes
+        .filter((c) => c.type === "remove")
+        .map((c) => (c as { id: string }).id);
       if (removed.length) {
         const gone = new Set<string>();
         const collect = (gid: string) => {
@@ -277,7 +370,9 @@ function Studio() {
         };
         removed.forEach(collect);
         next = next.filter((n) => !gone.has(n.id));
-        setMasterEdges((es) => es.filter((e) => !gone.has(e.source) && !gone.has(e.target)));
+        setMasterEdges((es) =>
+          es.filter((e) => !gone.has(e.source) && !gone.has(e.target)),
+        );
       }
       return next;
     });
@@ -290,75 +385,98 @@ function Studio() {
         return stub ? stub.id : id;
       };
       const mapped = changes.map((c) =>
-        c.type === "remove" ? { ...c, id: real(c.id) } : c
+        c.type === "remove" ? { ...c, id: real(c.id) } : c,
       );
       return applyEdgeChanges(mapped, es);
     });
   }, []);
 
   /** Boundary of a collapsed group in the current view: unique entry/exit blocks. */
-  const boundary = useCallback((groupId: string, side: "in" | "out"): string | null => {
-    const kids = new Set(kidsOf(masterNodes, groupId).map((n) => n.id));
-    const pts = new Set<string>();
-    for (const e of masterEdges) {
-      const sIn = kids.has(e.source) || directChild(masterNodes, e.source, groupId) !== null;
-      const tIn = kids.has(e.target) || directChild(masterNodes, e.target, groupId) !== null;
-      if (side === "in" && !sIn && tIn) {
-        const dc = directChild(masterNodes, e.target, groupId);
-        if (dc) pts.add(dc);
+  const boundary = useCallback(
+    (groupId: string, side: "in" | "out"): string | null => {
+      const kids = new Set(kidsOf(masterNodes, groupId).map((n) => n.id));
+      const pts = new Set<string>();
+      for (const e of masterEdges) {
+        const sIn =
+          kids.has(e.source) ||
+          directChild(masterNodes, e.source, groupId) !== null;
+        const tIn =
+          kids.has(e.target) ||
+          directChild(masterNodes, e.target, groupId) !== null;
+        if (side === "in" && !sIn && tIn) {
+          const dc = directChild(masterNodes, e.target, groupId);
+          if (dc) pts.add(dc);
+        }
+        if (side === "out" && sIn && !tIn) {
+          const dc = directChild(masterNodes, e.source, groupId);
+          if (dc) pts.add(dc);
+        }
       }
-      if (side === "out" && sIn && !tIn) {
-        const dc = directChild(masterNodes, e.source, groupId);
-        if (dc) pts.add(dc);
-      }
-    }
-    return pts.size === 1 ? [...pts][0] : null;
-  }, [masterNodes, masterEdges]);
+      return pts.size === 1 ? [...pts][0] : null;
+    },
+    [masterNodes, masterEdges],
+  );
 
-  const onConnect = useCallback((c: Connection) => {
-    if (!c.source || !c.target) return;
-    let { source, target } = c;
-    const sn = byId.get(source), tn = byId.get(target);
-    if (sn?.type === "group") {
-      const exit = boundary(source, "out");
-      if (!exit) {
-        setNotice(`"${sn.data.name}" has no single exit block — open it and wire a specific block.`);
-        return;
+  const onConnect = useCallback(
+    (c: Connection) => {
+      if (!c.source || !c.target) return;
+      let { source, target } = c;
+      const sn = byId.get(source),
+        tn = byId.get(target);
+      if (sn?.type === "group") {
+        const exit = boundary(source, "out");
+        if (!exit) {
+          setNotice(
+            `"${sn.data.name}" has no single exit block — open it and wire a specific block.`,
+          );
+          return;
+        }
+        source = exit;
       }
-      source = exit;
-    }
-    if (tn?.type === "group") {
-      const entry = boundary(target, "in");
-      if (!entry) {
-        setNotice(`"${tn.data.name}" has no single entry block — open it and wire a specific block.`);
-        return;
+      if (tn?.type === "group") {
+        const entry = boundary(target, "in");
+        if (!entry) {
+          setNotice(
+            `"${tn.data.name}" has no single entry block — open it and wire a specific block.`,
+          );
+          return;
+        }
+        target = entry;
       }
-      target = entry;
-    }
-    if (source === target) return;
-    const id = `e${Date.now().toString(36)}`;
-    setMasterEdges((es) =>
-      es.some((e) => e.source === source && e.target === target)
-        ? es : [...es, { id, source, target, animated: true }]
-    );
-  }, [byId, boundary]);
+      if (source === target) return;
+      const id = `e${Date.now().toString(36)}`;
+      setMasterEdges((es) =>
+        es.some((e) => e.source === source && e.target === target)
+          ? es
+          : [...es, { id, source, target, animated: true }],
+      );
+    },
+    [byId, boundary],
+  );
 
   /* ----- drag new blocks from palette ----- */
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    const kind = e.dataTransfer.getData("application/visualml") as NodeKind;
-    if (!kind) return;
-    const bounds = wrapRef.current?.getBoundingClientRect();
-    const id = `${kind}-${seq++}`;
-    const node: Node = {
-      id, type: "ml",
-      position: { x: e.clientX - (bounds?.left ?? 0) - 80, y: e.clientY - (bounds?.top ?? 0) - 40 },
-      data: { kind, params: defaultParams(kind) },
-    };
-    if (scope) (node as Node & { parentId?: string }).parentId = scope;
-    setMasterNodes((ns) => [...ns, node]);
-    setSelectedId(id);
-  }, [scope]);
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const kind = e.dataTransfer.getData("application/visualml") as NodeKind;
+      if (!kind) return;
+      const bounds = wrapRef.current?.getBoundingClientRect();
+      const id = `${kind}-${seq++}`;
+      const node: Node = {
+        id,
+        type: "ml",
+        position: {
+          x: e.clientX - (bounds?.left ?? 0) - 80,
+          y: e.clientY - (bounds?.top ?? 0) - 40,
+        },
+        data: { kind, params: defaultParams(kind) },
+      };
+      if (scope) (node as Node & { parentId?: string }).parentId = scope;
+      setMasterNodes((ns) => [...ns, node]);
+      setSelectedId(id);
+    },
+    [scope],
+  );
 
   /* ----- grouping ----- */
   const groupSelected = () => {
@@ -367,7 +485,9 @@ function Studio() {
       return n && (n.parentId ?? undefined) === (scope ?? undefined);
     });
     if (inView.length === 0) {
-      setNotice("Select one or more blocks (Shift+click or drag a box), then Group.");
+      setNotice(
+        "Select one or more blocks (Shift+click or drag a box), then Group.",
+      );
       return;
     }
     const pts = inView.map((id) => byId.get(id)!.position);
@@ -376,15 +496,21 @@ function Studio() {
     const gid = `g-${seq++}`;
     const name = `Group ${groupCount++}`;
     const proxy: Node = {
-      id: gid, type: "group", position: { x: cx, y: cy },
+      id: gid,
+      type: "group",
+      position: { x: cx, y: cy },
       data: { kind: "group", groupId: gid, name },
     };
     if (scope) (proxy as Node & { parentId?: string }).parentId = scope;
     setMasterNodes((ns) =>
-      ns.map((n) => (inView.includes(n.id) ? { ...n, parentId: gid } : n)).concat(proxy)
+      ns
+        .map((n) => (inView.includes(n.id) ? { ...n, parentId: gid } : n))
+        .concat(proxy),
     );
     setSelectedId(gid);
-    setNotice(`Created "${name}" — rename it in the inspector, double-click to open.`);
+    setNotice(
+      `Created "${name}" — rename it in the inspector, double-click to open.`,
+    );
   };
 
   const ungroup = (gid: string) => {
@@ -392,9 +518,11 @@ function Studio() {
     if (!proxy) return;
     const up = (proxy.parentId ?? undefined) as string | undefined;
     setMasterNodes((ns) =>
-      ns.filter((n) => n.id !== gid).map((n) =>
-        (n.parentId ?? undefined) === gid ? { ...n, parentId: up } : n
-      )
+      ns
+        .filter((n) => n.id !== gid)
+        .map((n) =>
+          (n.parentId ?? undefined) === gid ? { ...n, parentId: up } : n,
+        ),
     );
     if (scope === gid) {
       // we are inside the group being dissolved -> go up
@@ -426,25 +554,33 @@ function Studio() {
 
   /* ----- inspector edits ----- */
   const patchParams = (id: string, params: Record<string, string | number>) =>
-    setMasterNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, params } } : n)));
+    setMasterNodes((ns) =>
+      ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, params } } : n)),
+    );
 
   const renameGroup = (id: string, name: string) =>
-    setMasterNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, name } } : n)));
+    setMasterNodes((ns) =>
+      ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, name } } : n)),
+    );
 
   const deleteNode = (id: string) => {
     const gone = new Set<string>([id]);
     const n = byId.get(id);
     if (n?.type === "group") {
       const collect = (gid: string) => {
-        masterNodes.filter((m) => m.parentId === gid).forEach((c) => {
-          gone.add(c.id);
-          if (c.type === "group") collect(c.id);
-        });
+        masterNodes
+          .filter((m) => m.parentId === gid)
+          .forEach((c) => {
+            gone.add(c.id);
+            if (c.type === "group") collect(c.id);
+          });
       };
       collect(id);
     }
     setMasterNodes((ns) => ns.filter((m) => !gone.has(m.id)));
-    setMasterEdges((es) => es.filter((e) => !gone.has(e.source) && !gone.has(e.target)));
+    setMasterEdges((es) =>
+      es.filter((e) => !gone.has(e.source) && !gone.has(e.target)),
+    );
     setSelectedId(null);
   };
 
@@ -473,28 +609,64 @@ function Studio() {
   }, []);
 
   const asWarnings = (w: unknown): string[] =>
-    Array.isArray(w) ? w.map((x) => (typeof x === "string" ? x : JSON.stringify(x))) : [];
+    Array.isArray(w)
+      ? w.map((x) => (typeof x === "string" ? x : JSON.stringify(x)))
+      : [];
 
   const validate = async (nodes?: Node[], edges?: Edge[]) => {
     setBusy(true);
     try {
-      const r = await postJSON<ValidateSuccess>(`/api/validate`, nodes && edges ? serialize(nodes, edges) : graph());
+      const r = await postJSON<ValidateSuccess>(
+        `/api/validate`,
+        nodes && edges ? serialize(nodes, edges) : graph(),
+      );
       const warnings = asWarnings(r.warnings);
-      setSummary({ order: r.order ?? [], params: r.params ?? null, shapes: r.shapes ?? [], config: r.config ?? null, warnings });
+      setSummary({
+        order: r.order ?? [],
+        params: r.params ?? null,
+        shapes: r.shapes ?? [],
+        config: r.config ?? null,
+        warnings,
+      });
       const warnTxt = warnings.length ? ` · ⚠ ${warnings.join(" | ")}` : "";
-      setNotice(`Valid ✓ ${(r.order as string[] ?? []).join("  →  ")} · ${r.params} params${warnTxt}`);
+      setNotice(
+        `Valid ✓ ${((r.order as string[]) ?? []).join("  →  ")} · ${r.params} params${warnTxt}`,
+      );
     } catch (e) {
       const msg = (e as Error).message;
-      const payload = (e as Error & { payload?: unknown }).payload as Record<string, unknown> | undefined;
+      const payload = (e as Error & { payload?: unknown }).payload as
+        | Record<string, unknown>
+        | undefined;
       // structured {ok:false, error:{...}, warnings[]} or legacy detail string
-      const errObj = (payload?.error ?? (() => { try { return JSON.parse(msg); } catch { return null; } })()) as ValidateErrorInfo | null;
-      const errRec = (errObj && typeof errObj === "object" ? errObj : null) as (ValidateErrorInfo & { error?: unknown }) | null;
-      const inner = errRec && typeof errRec.error === "object" ? errRec.error as ValidateErrorInfo : errRec;
+      const errObj = (payload?.error ??
+        (() => {
+          try {
+            return JSON.parse(msg);
+          } catch {
+            return null;
+          }
+        })()) as ValidateErrorInfo | null;
+      const errRec = (errObj && typeof errObj === "object" ? errObj : null) as
+        | (ValidateErrorInfo & { error?: unknown })
+        | null;
+      const inner =
+        errRec && typeof errRec.error === "object"
+          ? (errRec.error as ValidateErrorInfo)
+          : errRec;
       const warnings = asWarnings(payload?.warnings);
-      if (warnings.length) setSummary((s) => s ? { ...s, warnings } : s);
+      if (warnings.length) setSummary((s) => (s ? { ...s, warnings } : s));
       const reason = inner?.reason ?? inner?.message ?? msg;
       const hint = inner?.hint ? ` — ${inner.hint}` : "";
-      const bits = [inner?.stage, inner?.op, inner?.expected !== undefined ? `expected ${JSON.stringify(inner.expected)}` : null, inner?.got !== undefined ? `got ${JSON.stringify(inner.got)}` : null].filter(Boolean).join(" ");
+      const bits = [
+        inner?.stage,
+        inner?.op,
+        inner?.expected !== undefined
+          ? `expected ${JSON.stringify(inner.expected)}`
+          : null,
+        inner?.got !== undefined ? `got ${JSON.stringify(inner.got)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
       const nid = inner?.node_id ?? inner?.nodeId ?? nodeIdFromMessage(msg);
       const where = nid ? ` [${nid}]` : "";
       const extra = bits ? ` (${bits})` : "";
@@ -510,7 +682,10 @@ function Studio() {
     setLogs([]);
     try {
       const r = await postJSON<{ job_id: string }>(`/api/train`, {
-        graph: graph(), epochs, save_format: saveFormat, save_mode: saveMode,
+        graph: graph(),
+        epochs,
+        save_format: saveFormat,
+        save_mode: saveMode,
       });
       const jobId = r.job_id;
       setNotice(`Training started: ${jobId}`);
@@ -528,10 +703,23 @@ function Studio() {
           setJob((j) => {
             if (!j || j.job_id !== jobId) return j;
             const hist = m.epoch
-              ? [...j.history.filter((h) => h.epoch !== m.epoch),
-                 { epoch: m.epoch, train_loss: +m.train_loss.toFixed(4), val_loss: +m.val_loss.toFixed(4), val_acc: +m.val_acc.toFixed(4) }]
+              ? [
+                  ...j.history.filter((h) => h.epoch !== m.epoch),
+                  {
+                    epoch: m.epoch,
+                    train_loss: +m.train_loss.toFixed(4),
+                    val_loss: +m.val_loss.toFixed(4),
+                    val_acc: +m.val_acc.toFixed(4),
+                  },
+                ]
               : j.history;
-            return { ...j, status: m.status ?? j.status, current_epoch: m.epoch ?? j.current_epoch, history: hist, save_path: m.save_path ?? j.save_path };
+            return {
+              ...j,
+              status: m.status ?? j.status,
+              current_epoch: m.epoch ?? j.current_epoch,
+              history: hist,
+              save_path: m.save_path ?? j.save_path,
+            };
           });
         }
       };
@@ -543,12 +731,14 @@ function Studio() {
       setBusy(false);
     }
   };
+  void train; // ponytail: Train hidden to protect backend load, keep handler referenced for tsc noUnusedLocals.
 
   const doExport = async (kind: "python" | "notebook") => {
     try {
       await downloadBlob(
-        `/api/export/${kind}`, { graph: graph(), epochs },
-        kind === "python" ? "model.py" : "model.ipynb"
+        `/api/export/${kind}`,
+        { graph: graph(), epochs },
+        kind === "python" ? "model.py" : "model.ipynb",
       );
       setNotice(`Exported ${kind === "python" ? "model.py" : "model.ipynb"}`);
     } catch (e) {
@@ -558,12 +748,16 @@ function Studio() {
 
   const exportJson = () => {
     const payload = {
-      version: 1, app: "visualML",
+      version: 1,
+      app: "visualML",
       exportedAt: new Date().toISOString(),
-      nodes: masterNodes, edges: masterEdges,
+      nodes: masterNodes,
+      edges: masterEdges,
     };
     downloadText("visualml-graph.json", JSON.stringify(payload, null, 2));
-    setNotice(`Exported visualml-graph.json (${masterNodes.length} nodes, ${masterEdges.length} edges)`);
+    setNotice(
+      `Exported visualml-graph.json (${masterNodes.length} nodes, ${masterEdges.length} edges)`,
+    );
   };
 
   const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -577,51 +771,100 @@ function Studio() {
       setScope(null);
       setPath([]);
       setSelectedId(null);
-      setNotice(`Imported ${f.name} (${nodes.length} nodes, ${edges.length} edges)`);
+      setNotice(
+        `Imported ${f.name} (${nodes.length} nodes, ${edges.length} edges)`,
+      );
       await validate(nodes, edges);
     } catch (err) {
       setNotice(`Import failed: ${(err as Error).message}`);
     }
   };
 
-  const scopeName = scope ? byId.get(scope)?.data.name ?? scope : null;
-  const inputNode = masterNodes.find((n) => n.type === "ml" && (n.data as { kind: string }).kind === "input");
-  const batchSize = (inputNode?.data as { params?: Record<string, unknown> } | undefined)?.params?.batch_size ?? 64;
+  const scopeName = scope ? (byId.get(scope)?.data.name ?? scope) : null;
+  const inputNode = masterNodes.find(
+    (n) => n.type === "ml" && (n.data as { kind: string }).kind === "input",
+  );
+  const batchSize =
+    (inputNode?.data as { params?: Record<string, unknown> } | undefined)
+      ?.params?.batch_size ?? 64;
 
   const palItems = (Object.keys(KIND_META) as NodeKind[]).filter((k) => {
     if (k === "group") return false;
     const q = palQuery.trim().toLowerCase();
     if (!q) return true;
     const m = KIND_META[k];
-    return k.includes(q) || m.label.toLowerCase().includes(q) || m.desc.toLowerCase().includes(q);
+    return (
+      k.includes(q) ||
+      m.label.toLowerCase().includes(q) ||
+      m.desc.toLowerCase().includes(q)
+    );
   });
 
   return (
     <div className="studio">
       <header className="topbar">
-        <div className="brand">◈ VisualML <span className="poc">dynamic</span></div>
+        <div className="brand">
+          ◈ VisualML <span className="poc">dynamic</span>
+        </div>
         <div className="controls">
-          <label>epochs <input type="number" min={1} max={100} value={epochs} onChange={(e) => setEpochs(Number(e.target.value))} /></label>
-          <label title="Batch size lives on the input block">batches <input type="number" value={String(batchSize)} readOnly /></label>
-          <select value={saveFormat} onChange={(e) => setSaveFormat(e.target.value)} title="Save file type">
+          <label>
+            epochs{" "}
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={epochs}
+              onChange={(e) => setEpochs(Number(e.target.value))}
+            />
+          </label>
+          <label title="Batch size lives on the input block">
+            batches <input type="number" value={String(batchSize)} readOnly />
+          </label>
+          <select
+            value={saveFormat}
+            onChange={(e) => setSaveFormat(e.target.value)}
+            title="Save file type"
+          >
             <option value="pt">.pt</option>
             <option value="pth">.pth</option>
             <option value="pkl">.pkl</option>
           </select>
-          <select value={saveMode} onChange={(e) => setSaveMode(e.target.value)} title="Save weights only or full checkpoint">
+          {/* <select value={saveMode} onChange={(e) => setSaveMode(e.target.value)} title="Save weights only or full checkpoint">
             <option value="weights_only">weights only</option>
             <option value="full">full training data</option>
-          </select>
-          <button onClick={() => validate()} disabled={busy}>Validate</button>
-          <button className="primary" onClick={train} disabled={busy}>▶ Train</button>
+          </select> */}
+          <button onClick={() => validate()} disabled={busy}>
+            Validate
+          </button>
+
+          {/* UNCOMMENT THESE TO SHOW TRAIN BUTTON  */}
+          {/* Train hidden to protect backend load */}
+          {/* <button className="primary" onClick={train} disabled={busy}>▶ Train</button> */}
           <button onClick={() => doExport("python")}>⇩ .py</button>
           <button onClick={() => doExport("notebook")}>⇩ .ipynb</button>
-          <button onClick={exportJson} title="Save canvas as visualML v1 JSON">⇩ JSON</button>
-          <button onClick={() => fileRef.current?.click()} title="Load a visualML v1 JSON graph">⇧ Import</button>
-          <button onClick={() => setShowGuide(true)} title="JSON format guide">i</button>
-          <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={onImportFile} />
+          <button onClick={exportJson} title="Save canvas as visualML v1 JSON">
+            ⇩ JSON
+          </button>
+          <button
+            onClick={() => fileRef.current?.click()}
+            title="Load a visualML v1 JSON graph"
+          >
+            ⇧ Import
+          </button>
+          <button onClick={() => setShowGuide(true)} title="JSON format guide">
+            i
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={onImportFile}
+          />
           {job?.save_path && (
-            <a className="btn" href={`${API}/api/download/${job.job_id}`}>⇩ model.{saveFormat}</a>
+            <a className="btn" href={`${API}/api/download/${job.job_id}`}>
+              ⇩ model.{saveFormat}
+            </a>
           )}
         </div>
       </header>
@@ -629,27 +872,45 @@ function Studio() {
       {notice && (
         <div className="notice">
           <span title={notice}>{notice}</span>
-          <button onClick={() => setNotice("")} title="Dismiss">×</button>
+          <button onClick={() => setNotice("")} title="Dismiss">
+            ×
+          </button>
         </div>
       )}
 
       <div className="crumbs">
-        <button className={scope === null ? "active" : ""} onClick={() => goTo(-1)}>Root</button>
+        <button
+          className={scope === null ? "active" : ""}
+          onClick={() => goTo(-1)}
+        >
+          Root
+        </button>
         {path.map((p, i) => (
           <span key={p.id}>
             <span className="sep">/</span>
-            <button className={i === path.length - 1 ? "active" : ""} onClick={() => goTo(i)}>
+            <button
+              className={i === path.length - 1 ? "active" : ""}
+              onClick={() => goTo(i)}
+            >
               {byId.get(p.id)?.data.name ?? p.name}
             </button>
           </span>
         ))}
         {scope && (
-          <button className="danger-link" onClick={() => ungroup(scope)} title="Dissolve this group">
+          <button
+            className="danger-link"
+            onClick={() => ungroup(scope)}
+            title="Dissolve this group"
+          >
             Ungroup "{scopeName}"
           </button>
         )}
         <span className="spacer" />
-        <button onClick={groupSelected} disabled={selectedIds.length === 0} title="Group selected blocks (Shift+click / box-select)">
+        <button
+          onClick={groupSelected}
+          disabled={selectedIds.length === 0}
+          title="Group selected blocks (Shift+click / box-select)"
+        >
           ⧉ Group ({selectedIds.length})
         </button>
       </div>
@@ -670,11 +931,15 @@ function Studio() {
                 key={k}
                 className="palette-item"
                 draggable
-                onDragStart={(e) => e.dataTransfer.setData("application/visualml", k)}
+                onDragStart={(e) =>
+                  e.dataTransfer.setData("application/visualml", k)
+                }
                 style={{ borderLeftColor: KIND_META[k].color }}
                 title="Drag onto the canvas"
               >
-                <b style={{ color: KIND_META[k].color }}>{KIND_META[k].label}</b>
+                <b style={{ color: KIND_META[k].color }}>
+                  {KIND_META[k].label}
+                </b>
                 <small>{KIND_META[k].desc}</small>
               </div>
             ))}
@@ -683,12 +948,18 @@ function Studio() {
             )}
           </div>
           <div className="palette-hint">
-            Drag blocks onto the canvas, wire them freely. Click a wire to select it, then press
-            Delete or remove it from the inspector. Shift+click or box-select, then ⧉ Group.
+            Drag blocks onto the canvas, wire them freely. Click a wire to
+            select it, then press Delete or remove it from the inspector.
+            Shift+click or box-select, then ⧉ Group.
           </div>
         </aside>
 
-        <div className="canvas" ref={wrapRef} onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
+        <div
+          className="canvas"
+          ref={wrapRef}
+          onDrop={onDrop}
+          onDragOver={(e) => e.preventDefault()}
+        >
           <ReactFlow
             nodes={viewNodes}
             edges={viewEdges}
@@ -696,7 +967,9 @@ function Studio() {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeClick={onNodeClick}
-            onNodeDoubleClick={(_, n) => { if (n.type === "group") openGroup(n.id); }}
+            onNodeDoubleClick={(_, n) => {
+              if (n.type === "group") openGroup(n.id);
+            }}
             onPaneClick={onPaneClick}
             onSelectionChange={onSelectionChange}
             nodeTypes={nodeTypes}
@@ -725,57 +998,129 @@ function Studio() {
 
       {showGuide && (
         <div
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            zIndex: 50,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
           onClick={() => setShowGuide(false)}
         >
           <div
             className="panel"
-            style={{ maxWidth: 560, width: "100%", maxHeight: "85dvh", overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}
+            style={{
+              maxWidth: 560,
+              width: "100%",
+              maxHeight: "85dvh",
+              overflowY: "auto",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <h3>visualML v1 JSON format</h3>
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
               <button
-                style={guideTab === "format" ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
+                style={
+                  guideTab === "format"
+                    ? { borderColor: "var(--accent)", color: "var(--accent)" }
+                    : undefined
+                }
                 onClick={() => setGuideTab("format")}
-              >Format</button>
+              >
+                Format
+              </button>
               <button
-                style={guideTab === "nodes" ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
+                style={
+                  guideTab === "nodes"
+                    ? { borderColor: "var(--accent)", color: "var(--accent)" }
+                    : undefined
+                }
                 onClick={() => setGuideTab("nodes")}
-              >Available Nodes</button>
+              >
+                Available Nodes
+              </button>
             </div>
             {guideTab === "format" ? (
               <>
-                <p className="muted">Top level <code>{"{version, app, exportedAt, nodes, edges}"}</code>. Node: <code>{"{id, type: ml|group, position: {x,y}, parentId?, data: {kind, params, name?}}"}</code> — <code>kind</code> is an open-ended block-type string with a <code>params</code> object. Edge: <code>{"{id, source, target}"}</code>. Unknown kinds load as-is.</p>
-                <pre className="logs-pre" style={{ height: "auto", marginBottom: 8 }}>{GUIDE_EXAMPLE}</pre>
+                <p className="muted">
+                  Top level{" "}
+                  <code>{"{version, app, exportedAt, nodes, edges}"}</code>.
+                  Node:{" "}
+                  <code>
+                    {
+                      "{id, type: ml|group, position: {x,y}, parentId?, data: {kind, params, name?}}"
+                    }
+                  </code>{" "}
+                  — <code>kind</code> is an open-ended block-type string with a{" "}
+                  <code>params</code> object. Edge:{" "}
+                  <code>{"{id, source, target}"}</code>. Unknown kinds load
+                  as-is.
+                </p>
+                <pre
+                  className="logs-pre"
+                  style={{ height: "auto", marginBottom: 8 }}
+                >
+                  {GUIDE_EXAMPLE}
+                </pre>
                 <p className="muted">{GUIDE_PROMPT}</p>
                 <button
-                  onClick={async () => { await navigator.clipboard.writeText(GUIDE_COPY); setNotice("Format guide copied"); }}
-                >Copy guide</button>
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(GUIDE_COPY);
+                    setNotice("Format guide copied");
+                  }}
+                >
+                  Copy guide
+                </button>
               </>
             ) : (
               <>
-                <div style={{ maxHeight: "50dvh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div
+                  style={{
+                    maxHeight: "50dvh",
+                    overflowY: "auto",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
                   {PALETTE.map((k) => (
                     <div key={k}>
                       <div style={{ fontSize: 13 }}>
                         <code>{k}</code>
-                        <span className="muted"> — {KIND_META[k]?.desc ?? "block"}</span>
+                        <span className="muted">
+                          {" "}
+                          — {KIND_META[k]?.desc ?? "block"}
+                        </span>
                       </div>
-                      <pre className="logs-pre" style={{ height: "auto" }}>{JSON.stringify({ id: `${k}-1`, type: "ml", position: { x: 0, y: 0 }, data: { kind: k, params: defaultParams(k) } })}</pre>
+                      <pre className="logs-pre" style={{ height: "auto" }}>
+                        {JSON.stringify({
+                          id: `${k}-1`,
+                          type: "ml",
+                          position: { x: 0, y: 0 },
+                          data: { kind: k, params: defaultParams(k) },
+                        })}
+                      </pre>
                     </div>
                   ))}
                 </div>
                 <button
                   style={{ marginTop: 8 }}
                   onClick={async () => {
-                    const catalog = PALETTE.map((k) =>
-                      `${k} — ${KIND_META[k]?.desc ?? "block"}\n${JSON.stringify({ id: `${k}-1`, type: "ml", position: { x: 0, y: 0 }, data: { kind: k, params: defaultParams(k) } })}`
+                    const catalog = PALETTE.map(
+                      (k) =>
+                        `${k} — ${KIND_META[k]?.desc ?? "block"}\n${JSON.stringify({ id: `${k}-1`, type: "ml", position: { x: 0, y: 0 }, data: { kind: k, params: defaultParams(k) } })}`,
                     ).join("\n\n");
                     await navigator.clipboard.writeText(catalog);
                     setNotice("Node catalog copied");
                   }}
-                >Copy all</button>
+                >
+                  Copy all
+                </button>
               </>
             )}
             <button onClick={() => setShowGuide(false)}>Close</button>
@@ -783,7 +1128,13 @@ function Studio() {
         </div>
       )}
 
-      <LogsPanel job={job} logs={logs} open={logsOpen} onToggle={() => setLogsOpen((v) => !v)} summary={summary} />
+      <LogsPanel
+        job={job}
+        logs={logs}
+        open={logsOpen}
+        onToggle={() => setLogsOpen((v) => !v)}
+        summary={summary}
+      />
     </div>
   );
 }

@@ -6,12 +6,14 @@ View expects this at http://localhost:8000
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
@@ -24,9 +26,11 @@ from trainer import create_job, job_summary, jobs, list_jobs, run_training, subs
 
 app = FastAPI(title="VisualML Engine", version="0.1.0")
 
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()] or ["https://neuro-canvas-front.vercel.app", "http://localhost:5173", "http://127.0.0.1:5173"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -139,17 +143,30 @@ async def job_ws(ws: WebSocket, job_id: str):
 
 
 @app.get("/api/download/{job_id}")
-def download(job_id: str):
+def download(job_id: str, background: BackgroundTasks):
     if job_id not in jobs:
         raise HTTPException(404, "unknown job")
     path = jobs[job_id].get("save_path")
     if not path or not Path(path).exists():
         raise HTTPException(404, "model not ready yet")
-    return FileResponse(path, filename=Path(path).name)
+    background.add_task(_cleanup_job_artifact, path)
+    return FileResponse(path, filename=Path(path).name, background=background)
+
+
+def _cleanup_job_artifact(path: str):
+    # ponytail: best-effort delete so trained artifacts don't accumulate
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    try:
+        os.rmdir(str(Path(path).parent))
+    except OSError:
+        pass
 
 
 @app.post("/api/export/python")
-def export_python(req: ExportRequest, as_file: bool = True):
+def export_python(req: ExportRequest, background: BackgroundTasks, as_file: bool = True):
     try:
         validate_dynamic(req.graph)
     except ValueError as e:
@@ -159,15 +176,18 @@ def export_python(req: ExportRequest, as_file: bool = True):
     except ValueError as e:
         raise HTTPException(400, str(e))
     if as_file:
-        p = Path("runs") / "_export_model.py"
-        p.parent.mkdir(exist_ok=True)
-        p.write_text(code, encoding="utf-8")
-        return FileResponse(str(p), filename="model.py", media_type="text/x-python")
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".py")
+        try:
+            tmp.write(code.encode("utf-8"))
+        finally:
+            tmp.close()
+        background.add_task(os.unlink, tmp.name)
+        return FileResponse(tmp.name, filename="model.py", media_type="text/x-python", background=background)
     return PlainTextResponse(code)
 
 
 @app.post("/api/export/notebook")
-def export_notebook(req: ExportRequest):
+def export_notebook(req: ExportRequest, background: BackgroundTasks):
     try:
         validate_dynamic(req.graph)
     except ValueError as e:
@@ -176,10 +196,13 @@ def export_notebook(req: ExportRequest):
         nb = generate_notebook(req.graph.nodes, req.graph.edges, req.epochs)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    p = Path("runs") / "_export_model.ipynb"
-    p.parent.mkdir(exist_ok=True)
-    p.write_text(notebook_to_json(nb), encoding="utf-8")
-    return FileResponse(str(p), filename="model.ipynb")
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".ipynb")
+    try:
+        tmp.write(notebook_to_json(nb).encode("utf-8"))
+    finally:
+        tmp.close()
+    background.add_task(os.unlink, tmp.name)
+    return FileResponse(tmp.name, filename="model.ipynb", background=background)
 
 
 @app.post("/api/upload")
